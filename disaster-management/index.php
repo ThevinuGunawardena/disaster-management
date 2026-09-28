@@ -1130,8 +1130,9 @@ if ($role === 'National Authority') {
                             <button
                                 type="button"
                                 onclick="removeItem(this)"
+                                title="Remove item"
                             >
-                                
+                                ✕
                             </button>
 
                         </td>
@@ -1645,7 +1646,7 @@ if ($role === 'National Authority') {
                                     onclick="return confirm('Approve this supply request?');"
                                     title="Approve supply dispatch"
                                 >
-                                    
+                                    Approve
                                 </a>
                                 <a
                                     href="actions.php?action=reject_req&id=<?php echo (int)$req['id']; ?>"
@@ -1653,7 +1654,7 @@ if ($role === 'National Authority') {
                                     onclick="return confirm('Reject this supply request?');"
                                     title="Reject request"
                                 >
-                                    
+                                    Reject
                                 </a>
                             <?php endif; ?>
 
@@ -2499,8 +2500,9 @@ function addItem() {
             <button
                 type="button"
                 onclick="removeItem(this)"
+                title="Remove item"
             >
-                
+                ✕
             </button>
 
         </td>
