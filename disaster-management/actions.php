@@ -288,7 +288,8 @@ if ($action === 'save_all') {
                     camp_name = ?,
                     capacity = ?,
                     latitude = ?,
-                    longitude = ?
+                    longitude = ?,
+                    managed_by = ?
                 WHERE id = ?
             ");
 
@@ -302,11 +303,12 @@ if ($action === 'save_all') {
             }
 
             $stmt->bind_param(
-                "sissi",
+                "sissii",
                 $camp_name,
                 $capacity,
                 $latitude,
                 $longitude,
+                $user_id,
                 $camp_id
             );
 
@@ -388,10 +390,11 @@ if ($action === 'save_all') {
                     family_head_name,
                     members_count,
                     infants_count,
-                    special_needs_details
+                    special_needs_details,
+                    recorded_by
                 )
                 VALUES
-                (?, ?, ?, ?, ?)
+                (?, ?, ?, ?, ?, ?)
             ");
 
             if (!$stmt) {
@@ -404,12 +407,13 @@ if ($action === 'save_all') {
             }
 
             $stmt->bind_param(
-                "isiis",
+                "isiisi",
                 $camp_id,
                 $family_head,
                 $members,
                 $infants,
-                $special_needs
+                $special_needs,
+                $user_id
             );
 
             if (!$stmt->execute()) {
@@ -699,44 +703,90 @@ if ($action === 'update_camp') {
             $auth_stmt->close();
         }
 
-        if ($district !== '') {
-            $stmt = $conn->prepare("
-                UPDATE camps
-                SET
-                    camp_name = ?,
-                    district = ?,
-                    capacity = ?,
-                    latitude = ?,
-                    longitude = ?
-                WHERE id = ?
-            ");
-            $stmt->bind_param(
-                "ssissi",
-                $camp_name,
-                $district,
-                $capacity,
-                $latitude,
-                $longitude,
-                $camp_id
-            );
+        if ($role === 'Camp Officer') {
+            if ($district !== '') {
+                $stmt = $conn->prepare("
+                    UPDATE camps
+                    SET
+                        camp_name = ?,
+                        district = ?,
+                        capacity = ?,
+                        latitude = ?,
+                        longitude = ?,
+                        managed_by = ?
+                    WHERE id = ?
+                ");
+                $stmt->bind_param(
+                    "ssissii",
+                    $camp_name,
+                    $district,
+                    $capacity,
+                    $latitude,
+                    $longitude,
+                    $user_id,
+                    $camp_id
+                );
+            } else {
+                $stmt = $conn->prepare("
+                    UPDATE camps
+                    SET
+                        camp_name = ?,
+                        capacity = ?,
+                        latitude = ?,
+                        longitude = ?,
+                        managed_by = ?
+                    WHERE id = ?
+                ");
+                $stmt->bind_param(
+                    "sissii",
+                    $camp_name,
+                    $capacity,
+                    $latitude,
+                    $longitude,
+                    $user_id,
+                    $camp_id
+                );
+            }
         } else {
-            $stmt = $conn->prepare("
-                UPDATE camps
-                SET
-                    camp_name = ?,
-                    capacity = ?,
-                    latitude = ?,
-                    longitude = ?
-                WHERE id = ?
-            ");
-            $stmt->bind_param(
-                "sissi",
-                $camp_name,
-                $capacity,
-                $latitude,
-                $longitude,
-                $camp_id
-            );
+            if ($district !== '') {
+                $stmt = $conn->prepare("
+                    UPDATE camps
+                    SET
+                        camp_name = ?,
+                        district = ?,
+                        capacity = ?,
+                        latitude = ?,
+                        longitude = ?
+                    WHERE id = ?
+                ");
+                $stmt->bind_param(
+                    "ssissi",
+                    $camp_name,
+                    $district,
+                    $capacity,
+                    $latitude,
+                    $longitude,
+                    $camp_id
+                );
+            } else {
+                $stmt = $conn->prepare("
+                    UPDATE camps
+                    SET
+                        camp_name = ?,
+                        capacity = ?,
+                        latitude = ?,
+                        longitude = ?
+                    WHERE id = ?
+                ");
+                $stmt->bind_param(
+                    "sissi",
+                    $camp_name,
+                    $capacity,
+                    $latitude,
+                    $longitude,
+                    $camp_id
+                );
+            }
         }
 
         if (!$stmt) {
@@ -752,6 +802,49 @@ if ($action === 'update_camp') {
         }
 
         $stmt->close();
+
+        // Check if family details were also entered on this form
+        $family_head = trim($_POST['family_head'] ?? '');
+        $members = (int)($_POST['members'] ?? 0);
+        $infants = (int)($_POST['infants'] ?? 0);
+        $special_needs = trim($_POST['special_needs'] ?? '');
+
+        if ($family_head !== '' && $members > 0) {
+            $fam_stmt = $conn->prepare("
+                INSERT INTO families
+                (
+                    camp_id,
+                    family_head_name,
+                    members_count,
+                    infants_count,
+                    special_needs_details,
+                    recorded_by
+                )
+                VALUES
+                (?, ?, ?, ?, ?, ?)
+            ");
+            if ($fam_stmt) {
+                $fam_stmt->bind_param("isiisi", $camp_id, $family_head, $members, $infants, $special_needs, $user_id);
+                $fam_stmt->execute();
+                $fam_stmt->close();
+            }
+        }
+
+        // Recalculate camp population
+        $pop_stmt = $conn->prepare("
+            UPDATE camps
+            SET current_population = (
+                SELECT COALESCE(SUM(members_count), 0)
+                FROM families
+                WHERE camp_id = ?
+            )
+            WHERE id = ?
+        ");
+        if ($pop_stmt) {
+            $pop_stmt->bind_param("ii", $camp_id, $camp_id);
+            $pop_stmt->execute();
+            $pop_stmt->close();
+        }
 
     } else {
 
@@ -980,6 +1073,124 @@ if ($action === 'delete_item' || $action === 'delete_req') {
     $_SESSION['flash_message'] = [
         'type' => 'danger',
         'message' => 'Relief supply item ' . (!empty($item_name_deleted) ? '"' . $item_name_deleted . '" ' : '') . 'was deleted successfully.'
+    ];
+
+    header("Location: index.php");
+    exit;
+}
+
+
+
+/*
+|--------------------------------------------------------------------------
+| UPDATE DISPLACED PERSON / FAMILY ACTION
+|--------------------------------------------------------------------------
+*/
+if ($action === 'update_family') {
+
+    if (!in_array($role, ['Camp Officer', 'District Admin', 'National Authority'])) {
+        die("Access Denied.");
+    }
+
+    $family_id = (int)($_POST['family_id'] ?? 0);
+    $family_head = trim($_POST['family_head'] ?? '');
+    $members = (int)($_POST['members'] ?? 0);
+    $infants = (int)($_POST['infants'] ?? 0);
+    $special_needs = trim($_POST['special_needs'] ?? '');
+
+    if ($family_id <= 0 || $family_head === '' || $members <= 0 || $infants < 0) {
+        die("Please complete all valid Family Intake details.");
+    }
+    if ($infants > $members) {
+        die("Number of infants cannot exceed total members.");
+    }
+
+    // Verify authorization and get camp_id to recalculate population
+    if ($role === 'National Authority') {
+        $check_stmt = $conn->prepare("
+            SELECT f.id, f.camp_id, c.camp_name
+            FROM families AS f
+            INNER JOIN camps AS c ON f.camp_id = c.id
+            WHERE f.id = ?
+        ");
+        $check_stmt->bind_param("i", $family_id);
+    } elseif ($role === 'District Admin') {
+        $check_stmt = $conn->prepare("
+            SELECT f.id, f.camp_id, c.camp_name
+            FROM families AS f
+            INNER JOIN camps AS c ON f.camp_id = c.id
+            WHERE f.id = ? AND (? = 'All' OR TRIM(LOWER(c.district)) = TRIM(LOWER(?)))
+        ");
+        $check_stmt->bind_param("iss", $family_id, $user_district, $user_district);
+    } else {
+        // Camp Officer
+        $check_stmt = $conn->prepare("
+            SELECT f.id, f.camp_id, c.camp_name
+            FROM families AS f
+            INNER JOIN camps AS c ON f.camp_id = c.id
+            WHERE f.id = ? AND (c.managed_by = ? OR TRIM(LOWER(c.district)) = TRIM(LOWER(?)))
+        ");
+        $check_stmt->bind_param("iis", $family_id, $user_id, $user_district);
+    }
+
+    if (!$check_stmt) {
+        die("Database error: " . $conn->error);
+    }
+
+    $check_stmt->execute();
+    $res = $check_stmt->get_result();
+    if ($res->num_rows === 0) {
+        die("Access Denied: Family intake record not found or not in your jurisdiction.");
+    }
+
+    $fam_info = $res->fetch_assoc();
+    $camp_id_affected = (int)$fam_info['camp_id'];
+    $check_stmt->close();
+
+    $stmt = $conn->prepare("
+        UPDATE families
+        SET
+            family_head_name = ?,
+            members_count = ?,
+            infants_count = ?,
+            special_needs_details = ?,
+            recorded_by = ?
+        WHERE id = ?
+    ");
+    $stmt->bind_param(
+        "siisii",
+        $family_head,
+        $members,
+        $infants,
+        $special_needs,
+        $user_id,
+        $family_id
+    );
+
+    if (!$stmt->execute()) {
+        die("Failed to update family: " . $stmt->error);
+    }
+    $stmt->close();
+
+    // Recalculate camp population
+    $pop_stmt = $conn->prepare("
+        UPDATE camps
+        SET current_population = (
+            SELECT COALESCE(SUM(members_count), 0)
+            FROM families
+            WHERE camp_id = ?
+        )
+        WHERE id = ?
+    ");
+    if ($pop_stmt) {
+        $pop_stmt->bind_param("ii", $camp_id_affected, $camp_id_affected);
+        $pop_stmt->execute();
+        $pop_stmt->close();
+    }
+
+    $_SESSION['flash_message'] = [
+        'type' => 'success',
+        'message' => 'Family intake details for "' . htmlspecialchars($family_head) . '" updated successfully.'
     ];
 
     header("Location: index.php");

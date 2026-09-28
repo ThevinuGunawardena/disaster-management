@@ -156,6 +156,7 @@ $district_requests = [];
 $district_families = [];
 $district_camps = [];
 $camp_families_map = [];
+$camp_requests_map = [];
 
 if ($role === 'District Admin') {
 
@@ -198,6 +199,11 @@ if ($role === 'District Admin') {
 
         while ($row = $result->fetch_assoc()) {
             $district_requests[] = $row;
+            $cid = (int)$row['camp_id'];
+            if (!isset($camp_requests_map[$cid])) {
+                $camp_requests_map[$cid] = [];
+            }
+            $camp_requests_map[$cid][] = $row;
         }
 
         $stmt->close();
@@ -217,10 +223,12 @@ if ($role === 'District Admin') {
             c.district,
             c.capacity,
             c.current_population,
-            COALESCE(u.username, 'Camp Officer') AS officer_name
+            COALESCE(u_rec.username, u.username, 'Camp Officer') AS officer_name
         FROM families AS f
         INNER JOIN camps AS c
             ON f.camp_id = c.id
+        LEFT JOIN users AS u_rec
+            ON f.recorded_by = u_rec.id
         LEFT JOIN users AS u
             ON c.managed_by = u.id
         WHERE (? = 'All' OR TRIM(LOWER(c.district)) = TRIM(LOWER(?)))
@@ -257,7 +265,10 @@ if ($role === 'District Admin') {
             c.latitude,
             c.longitude,
             c.created_at,
-            COALESCE(u.username, 'Camp Officer') AS officer_name
+            c.updated_at,
+            COALESCE(u.username, 'Camp Officer') AS officer_name,
+            (SELECT COUNT(*) FROM families WHERE camp_id = c.id) AS families_count,
+            (SELECT COUNT(*) FROM supply_requests WHERE camp_id = c.id) AS requests_count
         FROM camps AS c
         LEFT JOIN users AS u
             ON c.managed_by = u.id
@@ -291,6 +302,7 @@ $national_requests = [];
 $national_families = [];
 $national_camps_list = [];
 $national_camp_families_map = [];
+$national_camp_requests_map = [];
 $national_districts = [];
 
 if ($role === 'National Authority') {
@@ -353,6 +365,11 @@ if ($role === 'National Authority') {
             if (!empty($row['district']) && !in_array($row['district'], $national_districts)) {
                 $national_districts[] = $row['district'];
             }
+            $cid = (int)$row['camp_id'];
+            if (!isset($national_camp_requests_map[$cid])) {
+                $national_camp_requests_map[$cid] = [];
+            }
+            $national_camp_requests_map[$cid][] = $row;
         }
     }
 
@@ -370,10 +387,12 @@ if ($role === 'National Authority') {
             c.district,
             c.capacity,
             c.current_population,
-            COALESCE(u.username, 'Camp Officer') AS officer_name
+            COALESCE(u_rec.username, u.username, 'Camp Officer') AS officer_name
         FROM families AS f
         INNER JOIN camps AS c
             ON f.camp_id = c.id
+        LEFT JOIN users AS u_rec
+            ON f.recorded_by = u_rec.id
         LEFT JOIN users AS u
             ON c.managed_by = u.id
         ORDER BY f.id DESC
@@ -409,6 +428,7 @@ if ($role === 'National Authority') {
             c.latitude,
             c.longitude,
             c.created_at,
+            c.updated_at,
             COALESCE(u.username, 'Camp Officer') AS officer_name
         FROM camps AS c
         LEFT JOIN users AS u
@@ -1042,34 +1062,36 @@ if ($role === 'National Authority') {
         <div class="card">
 
             <h2>2. Family Intake</h2>
+            <p style="color:#64748b; font-size:12px; margin:-4px 0 10px 0;">Record family arrival or leave blank if only updating camp or supply requests.</p>
 
             <input
                 type="text"
                 name="family_head"
-                placeholder="Family Head Full Name"
-                required
+                id="family_head"
+                placeholder="Family Head Full Name (Optional)"
             >
 
             <input
                 type="number"
                 name="members"
+                id="members"
                 placeholder="Total Members"
                 min="1"
-                required
             >
 
             <input
                 type="number"
                 name="infants"
+                id="infants"
                 placeholder="Number of Infants"
                 min="0"
                 value="0"
-                required
             >
 
             <textarea
                 name="special_needs"
-                placeholder="Special requirements details..."
+                id="special_needs"
+                placeholder="Special requirements details (medical, dietary, infant, disability)..."
             ></textarea>
 
         </div>
@@ -1082,6 +1104,7 @@ if ($role === 'National Authority') {
         <div class="card">
 
             <h2>3. Submit Supply Requests</h2>
+            <p style="color:#64748b; font-size:12px; margin:-4px 0 10px 0;">Request emergency relief items or leave blank if not applicable.</p>
 
             <table id="supplyTable">
 
@@ -1105,8 +1128,7 @@ if ($role === 'National Authority') {
                             <input
                                 type="text"
                                 name="item_type[]"
-                                placeholder="Item"
-                                required
+                                placeholder="Item (e.g. Water Bottles 5L)"
                             >
 
                         </td>
@@ -1119,7 +1141,6 @@ if ($role === 'National Authority') {
                                 name="quantity[]"
                                 placeholder="Qty"
                                 min="1"
-                                required
                             >
 
                         </td>
@@ -1336,6 +1357,15 @@ if ($role === 'National Authority') {
                                 title="View complete dossier for this person"
                             >
                                 View
+                            </button>
+                            <button
+                                type="button"
+                                class="btn-action"
+                                style="background:#0284c7;"
+                                onclick="openEditFamilyModal(<?php echo htmlspecialchars(json_encode($fam)); ?>)"
+                                title="Modify family details, member count, infants, or special requirements"
+                            >
+                                Modify
                             </button>
                             <button
                                 type="button"
@@ -1762,6 +1792,17 @@ if ($role === 'National Authority') {
                                 View
                             </button>
 
+                            <!-- Modify Option Button -->
+                            <button 
+                                type="button" 
+                                class="btn-action"
+                                style="background:#0284c7;"
+                                onclick="openEditFamilyModal(<?php echo htmlspecialchars(json_encode($fam)); ?>)"
+                                title="Modify family details, member count, infants, or special requirements"
+                            >
+                                Modify
+                            </button>
+
                             <!-- Delete Option Button -->
                             <button 
                                 type="button" 
@@ -1813,20 +1854,34 @@ if ($role === 'National Authority') {
             </thead>
             <tbody>
                 <?php foreach ($district_camps as $c): ?>
+                    <?php 
+                        $cap_val = (int)$c['capacity'];
+                        $pop_val = (int)$c['current_population'];
+                        $occ_pct = $cap_val > 0 ? round(($pop_val / $cap_val) * 100) : 0;
+                        $occ_color = $occ_pct >= 100 ? '#ef4444' : ($occ_pct >= 80 ? '#d97706' : '#10b981');
+                    ?>
                     <tr class="district-camp-row" data-search="<?php echo htmlspecialchars(strtolower($c['camp_name'] . ' ' . $c['district'] . ' ' . ($c['officer_name'] ?? ''))); ?>">
                         <td>
                             <strong style="color:#0f172a; font-size:14px;"><?php echo htmlspecialchars($c['camp_name']); ?></strong><br>
                             <span style="color:#64748b; font-size:11px;"><?php echo htmlspecialchars($c['district']); ?> District</span>
+                            <?php if (!empty($c['updated_at'])): ?>
+                                <div style="font-size:11px; color:#059669; font-weight:600; margin-top:2px;">
+                                    Updated: <?php echo date('M d, Y H:i', strtotime($c['updated_at'])); ?>
+                                </div>
+                            <?php endif; ?>
                         </td>
                         <td>
                             <span style="background:#f1f5f9; color:#0f172a; padding:3px 8px; border-radius:4px; font-weight:700; font-size:13px;">
-                                <?php echo (int)$c['capacity']; ?>
+                                <?php echo $cap_val; ?>
                             </span>
                         </td>
                         <td>
                             <span style="background:#f1f5f9; color:#0f172a; padding:3px 8px; border-radius:4px; font-weight:600; font-size:13px;">
-                                <?php echo (int)$c['current_population']; ?>
+                                <?php echo $pop_val; ?>
                             </span>
+                            <div style="font-size:10px; color:<?php echo $occ_color; ?>; font-weight:700; margin-top:2px;">
+                                <?php echo $occ_pct; ?>% capacity
+                            </div>
                         </td>
                         <td>
                             <span style="font-family:monospace; font-size:12px; color:#334155; background:#f8fafc; padding:2px 6px; border-radius:4px; border:1px solid #e2e8f0;">
@@ -1839,6 +1894,14 @@ if ($role === 'National Authority') {
                             </span>
                         </td>
                         <td style="white-space:nowrap; text-align:center;">
+                            <button 
+                                type="button" 
+                                class="btn-action view-btn"
+                                onclick="openCampDetailsModal(<?php echo htmlspecialchars(json_encode($c)); ?>, <?php echo htmlspecialchars(json_encode($camp_families_map[$c['id']] ?? [])); ?>, <?php echo htmlspecialchars(json_encode($camp_requests_map[$c['id']] ?? [])); ?>)"
+                                title="View comprehensive camp operational dossier"
+                            >
+                                View Details
+                            </button>
                             <button 
                                 type="button" 
                                 class="btn-action" 
@@ -2169,6 +2232,17 @@ if ($role === 'National Authority') {
                                 View
                             </button>
 
+                            <!-- Modify Option Button -->
+                            <button 
+                                type="button" 
+                                class="btn-action"
+                                style="background:#0284c7;"
+                                onclick="openEditFamilyModal(<?php echo htmlspecialchars(json_encode($fam)); ?>)"
+                                title="Modify family details, member count, infants, or special requirements"
+                            >
+                                Modify
+                            </button>
+
                             <!-- Delete Option Button -->
                             <button 
                                 type="button" 
@@ -2221,12 +2295,23 @@ if ($role === 'National Authority') {
             </thead>
             <tbody>
                 <?php foreach ($national_camps_list as $c): ?>
+                    <?php 
+                        $cap_val = (int)$c['capacity'];
+                        $pop_val = (int)$c['current_population'];
+                        $occ_pct = $cap_val > 0 ? round(($pop_val / $cap_val) * 100) : 0;
+                        $occ_color = $occ_pct >= 100 ? '#ef4444' : ($occ_pct >= 80 ? '#d97706' : '#10b981');
+                    ?>
                     <tr class="national-camp-row" 
                         data-search="<?php echo htmlspecialchars(strtolower($c['camp_name'] . ' ' . $c['district'] . ' ' . ($c['officer_name'] ?? ''))); ?>"
                         data-district="<?php echo htmlspecialchars(strtolower($c['district'])); ?>"
                     >
                         <td>
                             <strong style="color:#0f172a; font-size:14px;"><?php echo htmlspecialchars($c['camp_name']); ?></strong>
+                            <?php if (!empty($c['updated_at'])): ?>
+                                <div style="font-size:11px; color:#059669; font-weight:600; margin-top:2px;">
+                                    Updated: <?php echo date('M d, Y H:i', strtotime($c['updated_at'])); ?>
+                                </div>
+                            <?php endif; ?>
                         </td>
                         <td>
                             <span style="background:#e2e8f0; color:#334155; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600;">
@@ -2235,13 +2320,16 @@ if ($role === 'National Authority') {
                         </td>
                         <td>
                             <span style="background:#f1f5f9; color:#0f172a; padding:3px 8px; border-radius:4px; font-weight:700; font-size:13px;">
-                                <?php echo (int)$c['capacity']; ?>
+                                <?php echo $cap_val; ?>
                             </span>
                         </td>
                         <td>
                             <span style="background:#f1f5f9; color:#0f172a; padding:3px 8px; border-radius:4px; font-weight:600; font-size:13px;">
-                                <?php echo (int)$c['current_population']; ?>
+                                <?php echo $pop_val; ?>
                             </span>
+                            <div style="font-size:10px; color:<?php echo $occ_color; ?>; font-weight:700; margin-top:2px;">
+                                <?php echo $occ_pct; ?>% capacity
+                            </div>
                         </td>
                         <td>
                             <span style="font-family:monospace; font-size:12px; color:#334155; background:#f8fafc; padding:2px 6px; border-radius:4px; border:1px solid #e2e8f0;">
@@ -2254,6 +2342,14 @@ if ($role === 'National Authority') {
                             </span>
                         </td>
                         <td style="white-space:nowrap; text-align:center;">
+                            <button 
+                                type="button" 
+                                class="btn-action view-btn"
+                                onclick="openCampDetailsModal(<?php echo htmlspecialchars(json_encode($c)); ?>, <?php echo htmlspecialchars(json_encode($national_camp_families_map[$c['id']] ?? [])); ?>, <?php echo htmlspecialchars(json_encode($national_camp_requests_map[$c['id']] ?? [])); ?>)"
+                                title="View comprehensive camp operational dossier"
+                            >
+                                View Details
+                            </button>
                             <button 
                                 type="button" 
                                 class="btn-action" 
@@ -2448,6 +2544,81 @@ if ($role === 'National Authority') {
 </div>
 
 <!-- ==========================================================
+     EDIT FAMILY / PERSON MODAL
+========================================================== -->
+<div id="editFamilyModal" class="modal-overlay" style="display:none;" onclick="handleEditFamilyModalBackdropClick(event)">
+    <div class="modal-content modal-animated" style="max-width:560px; width:92%; background:#fff; border-radius:12px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.2), 0 10px 10px -5px rgba(0,0,0,0.1); padding:0; overflow:hidden;">
+        <div style="padding:16px 22px; background:#0284c7; color:#fff; display:flex; justify-content:space-between; align-items:center;">
+            <h3 id="editFamilyModalTitle" style="margin:0; font-size:17px; font-weight:700; color:#fff; display:flex; align-items:center; gap:8px;">
+                <span>Modify Family / Displaced Person Details</span>
+            </h3>
+            <button type="button" onclick="closeEditFamilyModal()" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; line-height:1; width:30px; height:30px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">&times;</button>
+        </div>
+        <form id="editFamilyForm" action="actions.php?action=update_family" method="POST" style="margin:0;">
+            <input type="hidden" name="family_id" id="edit_family_id" value="">
+            <div style="padding:22px; max-height:75vh; overflow-y:auto;">
+                <p style="margin:0 0 16px 0; color:#64748b; font-size:13px; line-height:1.5;">
+                    Update displaced family head name, member headcount, infant headcount, and medical/dietary special requirements.
+                </p>
+                <div style="margin-bottom:14px;">
+                    <label style="display:block; font-size:13px; font-weight:600; color:#334155; margin-bottom:6px;">Person / Family Head Name *</label>
+                    <input type="text" name="family_head" id="edit_family_head" required style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+                    <div>
+                        <label style="display:block; font-size:13px; font-weight:600; color:#334155; margin-bottom:6px;">Total Members *</label>
+                        <input type="number" name="members" id="edit_members" min="1" required style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:13px; font-weight:600; color:#334155; margin-bottom:6px;">Infants (Under 2 yrs)</label>
+                        <input type="number" name="infants" id="edit_infants" min="0" value="0" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                    </div>
+                </div>
+                <div style="margin-bottom:14px;">
+                    <label style="display:block; font-size:13px; font-weight:600; color:#334155; margin-bottom:6px;">Special Requirements & Medical Needs</label>
+                    <textarea name="special_needs" id="edit_special_needs" rows="3" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; box-sizing:border-box; resize:vertical;" placeholder="e.g. Insulin, wheelchair assistance, baby formula, pregnancy..."></textarea>
+                </div>
+                <div id="editFamilyCampInfo" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:10px 14px; font-size:12px; color:#475569;">
+                    <span>Camp: <strong id="edit_family_camp" style="color:#0f172a;">-</strong></span> &bull; 
+                    <span>Officer: <strong id="edit_family_officer" style="color:#0f172a;">-</strong></span>
+                </div>
+            </div>
+            <div style="padding:14px 22px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; gap:10px; align-items:center;">
+                <button type="button" onclick="closeEditFamilyModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">
+                    Cancel
+                </button>
+                <button type="submit" style="padding:8px 18px; background:#0284c7; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">
+                    Save Changes
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ==========================================================
+     CAMP DETAILS DOSSIER MODAL (DISTRICT ADMIN & NATIONAL AUTHORITY)
+========================================================== -->
+<div id="campDetailsDossierModal" class="modal-overlay" style="display:none;" onclick="handleCampDetailsModalBackdropClick(event)">
+    <div class="modal-content modal-animated" style="max-width:750px; width:92%; background:#fff; border-radius:12px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.2), 0 10px 10px -5px rgba(0,0,0,0.1); padding:0; overflow:hidden;">
+        <!-- Header -->
+        <div style="padding:16px 22px; background:#0f766e; color:#fff; display:flex; justify-content:space-between; align-items:center;">
+            <h3 id="campDetailsModalTitle" style="margin:0; font-size:17px; font-weight:700; color:#fff; display:flex; align-items:center; gap:8px;">
+                <span>Camp Operational Dossier</span>
+            </h3>
+            <button type="button" onclick="closeCampDetailsModal()" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; line-height:1; width:30px; height:30px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">&times;</button>
+        </div>
+        <!-- Body -->
+        <div id="campDetailsModalBody" style="padding:22px; max-height:75vh; overflow-y:auto;">
+            <!-- Rendered dynamically -->
+        </div>
+        <!-- Footer -->
+        <div id="campDetailsModalFooter" style="padding:14px 22px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
+            <!-- Buttons injected -->
+        </div>
+    </div>
+</div>
+
+<!-- ==========================================================
      LEAFLET JS
 ========================================================== -->
 
@@ -2477,8 +2648,7 @@ function addItem() {
             <input
                 type="text"
                 name="item_type[]"
-                placeholder="Item"
-                required
+                placeholder="Item (e.g. Dry Rations, Medicine)"
             >
 
         </td>
@@ -2490,7 +2660,6 @@ function addItem() {
                 name="quantity[]"
                 placeholder="Qty"
                 min="1"
-                required
             >
 
         </td>
@@ -2777,6 +2946,7 @@ function openPersonModal(fam) {
 
     footer.innerHTML = 
         '<button type="button" class="btn-action reject" style="margin-right:auto;" onclick="deletePerson(' + parseInt(fam.id) + ', \'' + escapeHtml(fam.family_head_name) + '\')">Delete Person / Family Record</button>' +
+        '<button type="button" class="btn-action" style="background:#0284c7;" onclick="closeDistrictModal(); openEditFamilyModal(' + escapeHtml(JSON.stringify(fam)) + ');">Edit Family Details</button>' +
         '<button type="button" onclick="closeDistrictModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">' +
             'Close' +
         '</button>';
@@ -2795,11 +2965,225 @@ function handleModalBackdropClick(event) {
     }
 }
 
+function openEditFamilyModal(fam) {
+    const modal = document.getElementById('editFamilyModal');
+    if (!modal) return;
+
+    const idEl = document.getElementById('edit_family_id');
+    const headEl = document.getElementById('edit_family_head');
+    const memEl = document.getElementById('edit_members');
+    const infEl = document.getElementById('edit_infants');
+    const snEl = document.getElementById('edit_special_needs');
+    const campEl = document.getElementById('edit_family_camp');
+    const offEl = document.getElementById('edit_family_officer');
+    const titleEl = document.getElementById('editFamilyModalTitle');
+
+    if (idEl) idEl.value = fam.id || '';
+    if (headEl) headEl.value = fam.family_head_name || '';
+    if (memEl) memEl.value = fam.members_count || 1;
+    if (infEl) infEl.value = fam.infants_count || 0;
+    if (snEl) snEl.value = fam.special_needs_details || '';
+    if (campEl) campEl.innerText = (fam.camp_name || 'Camp') + (fam.district ? ' (' + fam.district + ')' : '');
+    if (offEl) offEl.innerText = fam.officer_name || 'Camp Officer';
+
+    if (titleEl) {
+        titleEl.innerHTML = '<span>Modify Family: ' + escapeHtml(fam.family_head_name || 'Record') + '</span>';
+    }
+
+    modal.style.display = 'flex';
+}
+
+function closeEditFamilyModal() {
+    const modal = document.getElementById('editFamilyModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function handleEditFamilyModalBackdropClick(event) {
+    if (event.target && event.target.id === 'editFamilyModal') {
+        closeEditFamilyModal();
+    }
+}
+
+function openCampDetailsModal(camp, families, requests) {
+    const modal = document.getElementById('campDetailsDossierModal');
+    const title = document.getElementById('campDetailsModalTitle');
+    const body = document.getElementById('campDetailsModalBody');
+    const footer = document.getElementById('campDetailsModalFooter');
+    if (!modal || !title || !body) return;
+
+    title.innerHTML = '<span>Camp Operational Dossier: ' + escapeHtml(camp.camp_name || 'Camp') + '</span>';
+
+    const cap = parseInt(camp.capacity) || 0;
+    const pop = parseInt(camp.current_population) || 0;
+    const occPct = cap > 0 ? Math.round((pop / cap) * 100) : 0;
+    const badgeColor = occPct >= 100 ? '#ef4444' : (occPct >= 80 ? '#d97706' : '#10b981');
+    const badgeText = occPct >= 100 ? 'Full / Over Capacity' : (occPct >= 80 ? 'High Occupancy' : 'Normal');
+
+    let updatedStr = 'Initial Registration';
+    if (camp.updated_at) {
+        try {
+            const dt = new Date(camp.updated_at);
+            if (!isNaN(dt)) {
+                updatedStr = dt.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+            } else {
+                updatedStr = camp.updated_at;
+            }
+        } catch(e) {
+            updatedStr = camp.updated_at;
+        }
+    }
+
+    const famList = families || [];
+    const famsWithSpecial = famList.filter(function(f) {
+        const sn = (f.special_needs_details || '').trim();
+        return sn !== '' && sn.toLowerCase() !== 'none';
+    });
+
+    let familiesHtml = '';
+    if (famList.length > 0) {
+        const rows = famList.map(function(f) {
+            const hasSn = (f.special_needs_details || '').trim() !== '' && (f.special_needs_details || '').trim().toLowerCase() !== 'none';
+            return '<tr style="border-bottom:1px solid #f1f5f9;">' +
+                '<td style="padding:8px 10px; font-weight:600; color:#0f172a;">' + escapeHtml(f.family_head_name) + '</td>' +
+                '<td style="padding:8px 10px; text-align:center;"><span style="background:#f1f5f9; padding:2px 6px; border-radius:4px; font-weight:600;">' + parseInt(f.members_count) + '</span></td>' +
+                '<td style="padding:8px 10px; text-align:center;">' + (parseInt(f.infants_count) > 0 ? '<span style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-weight:700; font-size:11px;">' + parseInt(f.infants_count) + '</span>' : '<span style="color:#94a3b8;">0</span>') + '</td>' +
+                '<td style="padding:8px 10px; font-size:12px; color:#475569;">' + escapeHtml(f.officer_name || 'Camp Officer') + '</td>' +
+                '<td style="padding:8px 10px;">' + (hasSn ? '<span style="color:#b91c1c; font-weight:600; font-size:12px;">' + escapeHtml(f.special_needs_details) + '</span>' : '<span style="color:#94a3b8; font-size:12px; font-style:italic;">None</span>') + '</td>' +
+                '<td style="padding:8px 10px; text-align:center; white-space:nowrap;">' +
+                    '<button type="button" class="btn-action" style="background:#0284c7; padding:3px 8px; font-size:11px;" onclick="closeCampDetailsModal(); openEditFamilyModal(' + escapeHtml(JSON.stringify(f)) + ')">Edit</button>' +
+                '</td>' +
+            '</tr>';
+        }).join('');
+
+        familiesHtml = '<div style="margin-top:16px; background:#fff; border:1px solid #e2e8f0; border-radius:8px; overflow:hidden;">' +
+            '<div style="background:#f8fafc; padding:10px 14px; font-weight:700; color:#1e293b; font-size:13px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">' +
+                '<span>Sheltered Families & People (' + famList.length + ' Recorded)</span>' +
+                '<span style="font-size:12px; font-weight:600; color:#0f766e;">Headcount: ' + pop + ' Individuals</span>' +
+            '</div>' +
+            '<div style="max-height:220px; overflow-y:auto;">' +
+                '<table style="width:100%; border-collapse:collapse; font-size:12px;">' +
+                    '<thead><tr style="background:#f8fafc; color:#64748b; font-size:11px; text-align:left; border-bottom:1px solid #e2e8f0;">' +
+                        '<th style="padding:6px 10px;">Family Head</th>' +
+                        '<th style="padding:6px 10px; text-align:center;">Members</th>' +
+                        '<th style="padding:6px 10px; text-align:center;">Infants</th>' +
+                        '<th style="padding:6px 10px;">Intake Officer</th>' +
+                        '<th style="padding:6px 10px;">Special Needs</th>' +
+                        '<th style="padding:6px 10px; text-align:center;">Action</th>' +
+                    '</tr></thead>' +
+                    '<tbody>' + rows + '</tbody>' +
+                '</table>' +
+            '</div>' +
+        '</div>';
+    } else {
+        familiesHtml = '<div style="margin-top:16px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; padding:14px; color:#64748b; font-size:13px; text-align:center;">' +
+            'No displaced families currently registered at this camp location.' +
+        '</div>';
+    }
+
+    let specialBannerHtml = '';
+    if (famsWithSpecial.length > 0) {
+        const specialItems = famsWithSpecial.map(function(f) {
+            return '<li style="margin-bottom:4px;"><strong>' + escapeHtml(f.family_head_name) + ':</strong> ' + escapeHtml(f.special_needs_details) + '</li>';
+        }).join('');
+        specialBannerHtml = '<div style="margin-top:14px; background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; padding:12px 14px;">' +
+            '<div style="font-weight:700; color:#991b1b; font-size:13px; margin-bottom:6px; display:flex; align-items:center; gap:6px;">' +
+                '<span>Camp Officer Reported Special Requirements (' + famsWithSpecial.length + ' cases):</span>' +
+            '</div>' +
+            '<ul style="margin:0; padding-left:18px; font-size:12px; color:#b91c1c; line-height:1.5;">' + specialItems + '</ul>' +
+        '</div>';
+    }
+
+    const reqList = requests || [];
+    let requestsHtml = '';
+    if (reqList.length > 0) {
+        const reqRows = reqList.map(function(r) {
+            let statusBadge = '<span style="background:#fef9c3; color:#854d0e; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600;">' + escapeHtml(r.status) + '</span>';
+            if (r.status === 'Approved') statusBadge = '<span style="background:#dcfce7; color:#166534; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600;">Approved</span>';
+            if (r.status === 'Rejected') statusBadge = '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600;">Rejected</span>';
+            return '<tr style="border-bottom:1px solid #f1f5f9;">' +
+                '<td style="padding:8px 10px; font-weight:600; color:#0f172a;">' + escapeHtml(r.item_type) + '</td>' +
+                '<td style="padding:8px 10px; text-align:center; font-weight:600;">' + parseInt(r.quantity) + '</td>' +
+                '<td style="padding:8px 10px; text-align:center;">' + statusBadge + '</td>' +
+                '<td style="padding:8px 10px; font-size:11px; color:#64748b;">' + escapeHtml(r.created_at || '') + '</td>' +
+            '</tr>';
+        }).join('');
+
+        requestsHtml = '<div style="margin-top:14px; background:#fff; border:1px solid #e2e8f0; border-radius:8px; overflow:hidden;">' +
+            '<div style="background:#f8fafc; padding:10px 14px; font-weight:700; color:#1e293b; font-size:13px; border-bottom:1px solid #e2e8f0;">' +
+                'Relief Supply Requests for this Camp (' + reqList.length + ' Requisitions)' +
+            '</div>' +
+            '<table style="width:100%; border-collapse:collapse; font-size:12px;">' +
+                '<thead><tr style="background:#f8fafc; color:#64748b; font-size:11px; text-align:left; border-bottom:1px solid #e2e8f0;">' +
+                    '<th style="padding:6px 10px;">Item Type</th>' +
+                    '<th style="padding:6px 10px; text-align:center;">Quantity</th>' +
+                    '<th style="padding:6px 10px; text-align:center;">Status</th>' +
+                    '<th style="padding:6px 10px;">Requested Date</th>' +
+                '</tr></thead>' +
+                '<tbody>' + reqRows + '</tbody>' +
+            '</table>' +
+        '</div>';
+    }
+
+    body.innerHTML = 
+        '<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">' +
+            '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0;">' +
+                '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Camp Information</div>' +
+                '<div style="font-size:16px; font-weight:700; color:#0f172a; margin-top:2px;">' + escapeHtml(camp.camp_name) + '</div>' +
+                '<div style="font-size:12px; color:#475569; margin-top:4px;">' +
+                    'District: <strong>' + escapeHtml(camp.district) + '</strong> &bull; GPS: <code>' + escapeHtml(camp.latitude) + ', ' + escapeHtml(camp.longitude) + '</code>' +
+                '</div>' +
+            '</div>' +
+            '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0;">' +
+                '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Assigned Officer & Status</div>' +
+                '<div style="font-size:15px; font-weight:700; color:#0f172a; margin-top:2px;">' + escapeHtml(camp.officer_name || 'Camp Officer') + '</div>' +
+                '<div style="font-size:12px; color:#059669; font-weight:600; margin-top:4px;">' +
+                    'Last Updated: ' + escapeHtml(updatedStr) +
+                '</div>' +
+            '</div>' +
+        '</div>' +
+
+        '<div style="background:#f8fafc; padding:14px; border-radius:8px; border:1px solid #e2e8f0; margin-bottom:14px;">' +
+            '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">' +
+                '<div style="font-size:12px; font-weight:700; color:#334155; text-transform:uppercase;">Camp Occupancy & Capacity</div>' +
+                '<div style="display:flex; align-items:center; gap:8px;">' +
+                    '<span style="font-size:13px; font-weight:700; color:#0f172a;">' + pop + ' / ' + cap + ' Persons</span>' +
+                    '<span style="background:' + badgeColor + '; color:#fff; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:700;">' + occPct + '% (' + badgeText + ')</span>' +
+                '</div>' +
+            '</div>' +
+            '<div style="width:100%; background:#e2e8f0; height:10px; border-radius:5px; overflow:hidden;">' +
+                '<div style="width:' + Math.min(occPct, 100) + '%; background:' + badgeColor + '; height:100%; transition:width 0.3s ease;"></div>' +
+            '</div>' +
+        '</div>' +
+
+        specialBannerHtml +
+        familiesHtml +
+        requestsHtml;
+
+    footer.innerHTML = 
+        '<button type="button" class="btn-action" style="background:#0284c7; margin-right:auto;" onclick="closeCampDetailsModal(); openEditCampModal(' + escapeHtml(JSON.stringify(camp)) + ');">Modify Camp Location</button>' +
+        '<button type="button" onclick="closeCampDetailsModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Close</button>';
+
+    modal.style.display = 'flex';
+}
+
+function closeCampDetailsModal() {
+    const modal = document.getElementById('campDetailsDossierModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function handleCampDetailsModalBackdropClick(event) {
+    if (event.target && event.target.id === 'campDetailsDossierModal') {
+        closeCampDetailsModal();
+    }
+}
+
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         closeUniversalCampModal();
         closeDistrictModal();
         if (typeof closeNationalModal === 'function') closeNationalModal();
+        if (typeof closeEditFamilyModal === 'function') closeEditFamilyModal();
+        if (typeof closeCampDetailsModal === 'function') closeCampDetailsModal();
     }
 });
 
@@ -2925,19 +3309,15 @@ function editCampFromTable(camp) {
 
 function submitCampUpdateOnly() {
     const form = document.getElementById("saveAllForm");
-    form.action = "actions.php?action=update_camp";
+    const famHead = (form.querySelector("[name='family_head']")?.value || "").trim();
+    const hasItems = Array.from(form.querySelectorAll("[name='item_type[]']")).some(el => el.value.trim() !== "");
 
-    const famHead = form.querySelector("[name='family_head']");
-    const famMem = form.querySelector("[name='members']");
-    const famInf = form.querySelector("[name='infants']");
-    if (famHead) famHead.required = false;
-    if (famMem) famMem.required = false;
-    if (famInf) famInf.required = false;
-
-    const items = form.querySelectorAll("[name='item_type[]']");
-    const qtys = form.querySelectorAll("[name='quantity[]']");
-    items.forEach(el => el.required = false);
-    qtys.forEach(el => el.required = false);
+    if (famHead !== "" || hasItems) {
+        // Officer entered family intake or supply requests along with camp changes; use save_all so all details are processed together
+        form.action = "actions.php?action=save_all";
+    } else {
+        form.action = "actions.php?action=update_camp";
+    }
 
     form.submit();
 }
@@ -2971,6 +3351,18 @@ if (campMapElement) {
             const found = allLoadedCamps.find(c => c.id == selectedId);
             if (found) {
                 selectCampForUpdate(found);
+            } else {
+                const opt = this.options[this.selectedIndex];
+                if (opt && opt.dataset.name) {
+                    selectCampForUpdate({
+                        id: selectedId,
+                        camp_name: opt.dataset.name,
+                        capacity: opt.dataset.capacity,
+                        latitude: opt.dataset.lat,
+                        longitude: opt.dataset.lng,
+                        current_population: opt.dataset.pop
+                    });
+                }
             }
         });
     }
@@ -3467,6 +3859,7 @@ function openNationalPersonModal(fam) {
 
     footer.innerHTML = 
         '<button type="button" class="btn-action reject" style="margin-right:auto;" onclick="deletePerson(' + parseInt(fam.id) + ', \'' + escapeHtml(fam.family_head_name) + '\')">Delete Person / Family Record</button>' +
+        '<button type="button" class="btn-action" style="background:#0284c7;" onclick="closeNationalModal(); openEditFamilyModal(' + escapeHtml(JSON.stringify(fam)) + ');">Edit Family Details</button>' +
         '<button type="button" onclick="closeNationalModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">' +
             'Close' +
         '</button>';
@@ -3488,6 +3881,8 @@ function handleNationalModalBackdropClick(event) {
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         closeNationalModal();
+        if (typeof closeEditFamilyModal === 'function') closeEditFamilyModal();
+        if (typeof closeCampDetailsModal === 'function') closeCampDetailsModal();
     }
 });
 

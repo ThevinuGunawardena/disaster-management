@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS camps (
     longitude DECIMAL(11, 8) NOT NULL,
     managed_by INT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (managed_by) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -34,8 +35,10 @@ CREATE TABLE IF NOT EXISTS families (
     members_count INT NOT NULL,
     infants_count INT NOT NULL DEFAULT 0,
     special_needs_details TEXT,
+    recorded_by INT DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (camp_id) REFERENCES camps(id) ON DELETE CASCADE
+    FOREIGN KEY (camp_id) REFERENCES camps(id) ON DELETE CASCADE,
+    FOREIGN KEY (recorded_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- Supply Requests Table
