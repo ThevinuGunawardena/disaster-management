@@ -4,7 +4,7 @@ A web-based disaster displacement management platform built with PHP and MySQL.
 
 ---
 
-## 🚀 How to Run (After a PC Restart)
+## How to Run (After a PC Restart)
 
 ### Option 1: 1-Click Launch (Easiest)
 Double-click the **`run.bat`** file in this repository folder:
@@ -42,7 +42,7 @@ http://localhost:8000/login.php
 
 ---
 
-## 👥 Demo Logins
+## Demo Logins
 
 All seeded accounts use password: **`password123`**
 

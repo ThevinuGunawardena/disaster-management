@@ -570,10 +570,11 @@ if ($action === 'save_all') {
         |--------------------------------------------------------------------------
         */
 
-        header(
-            "Location: index.php?saved=1&camp_id=" . $camp_id
-        );
-
+        $_SESSION['flash_message'] = [
+            'type' => 'success',
+            'message' => 'Camp details, intake, and requests processed successfully.'
+        ];
+        header("Location: index.php");
         exit;
 
     }
@@ -801,8 +802,11 @@ if ($action === 'update_camp') {
 
     }
 
-    header("Location: index.php?saved=1&camp_id=" . $camp_id);
-
+    $_SESSION['flash_message'] = [
+        'type' => 'success',
+        'message' => 'Camp details updated successfully.'
+    ];
+    header("Location: index.php");
     exit;
 
 }
@@ -890,11 +894,12 @@ if ($action === 'delete_camp') {
 
     $del_stmt->close();
 
-    header(
-        "Location: index.php?deleted=1&camp_name=" .
-        urlencode($camp_name_deleted)
-    );
+    $_SESSION['flash_message'] = [
+        'type' => 'danger',
+        'message' => 'Camp location ' . (!empty($camp_name_deleted) ? '"' . $camp_name_deleted . '" ' : '') . 'was deleted successfully.'
+    ];
 
+    header("Location: index.php");
     exit;
 
 }
@@ -972,7 +977,12 @@ if ($action === 'delete_item' || $action === 'delete_req') {
     }
     $del_stmt->close();
 
-    header("Location: index.php?deleted_item=1&item_name=" . urlencode($item_name_deleted));
+    $_SESSION['flash_message'] = [
+        'type' => 'danger',
+        'message' => 'Relief supply item ' . (!empty($item_name_deleted) ? '"' . $item_name_deleted . '" ' : '') . 'was deleted successfully.'
+    ];
+
+    header("Location: index.php");
     exit;
 }
 
@@ -1066,7 +1076,12 @@ if ($action === 'delete_person' || $action === 'delete_family') {
         $pop_stmt->close();
     }
 
-    header("Location: index.php?deleted_person=1&person_name=" . urlencode($fam_head_deleted));
+    $_SESSION['flash_message'] = [
+        'type' => 'danger',
+        'message' => 'Displaced person / family ' . (!empty($fam_head_deleted) ? '"' . $fam_head_deleted . '" ' : '') . 'was deleted successfully and camp population was updated.'
+    ];
+
+    header("Location: index.php");
     exit;
 }
 
@@ -1672,6 +1687,11 @@ if ($action === 'approve_req') {
     $stmt->close();
 
 
+    $_SESSION['flash_message'] = [
+        'type' => 'success',
+        'message' => 'Relief supply request approved successfully.'
+    ];
+
     header(
         "Location: index.php"
     );
@@ -1748,6 +1768,11 @@ if ($action === 'reject_req') {
 
     $stmt->close();
 
+
+    $_SESSION['flash_message'] = [
+        'type' => 'danger',
+        'message' => 'Relief supply request was rejected.'
+    ];
 
     header(
         "Location: index.php"

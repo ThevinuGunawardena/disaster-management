@@ -7,9 +7,45 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
+// If request has legacy notification query params, convert to single-use session flash message and redirect to clean URL
+if (isset($_GET['deleted']) || isset($_GET['deleted_item']) || isset($_GET['deleted_person']) || isset($_GET['saved']) || isset($_GET['updated_camp'])) {
+    if (!isset($_SESSION['flash_message'])) {
+        if (isset($_GET['saved'])) {
+            $_SESSION['flash_message'] = [
+                'type' => 'success',
+                'message' => 'Camp details, intake, and requests processed successfully.'
+            ];
+        } elseif (isset($_GET['deleted'])) {
+            $name = !empty($_GET['camp_name']) ? '"' . htmlspecialchars($_GET['camp_name']) . '" ' : '';
+            $_SESSION['flash_message'] = [
+                'type' => 'danger',
+                'message' => 'Camp location ' . $name . 'was deleted successfully.'
+            ];
+        } elseif (isset($_GET['deleted_item'])) {
+            $name = !empty($_GET['item_name']) ? '"' . htmlspecialchars($_GET['item_name']) . '" ' : '';
+            $_SESSION['flash_message'] = [
+                'type' => 'danger',
+                'message' => 'Relief supply item ' . $name . 'was deleted successfully.'
+            ];
+        } elseif (isset($_GET['deleted_person'])) {
+            $name = !empty($_GET['person_name']) ? '"' . htmlspecialchars($_GET['person_name']) . '" ' : '';
+            $_SESSION['flash_message'] = [
+                'type' => 'danger',
+                'message' => 'Displaced person / family ' . $name . 'was deleted successfully and camp population was updated.'
+            ];
+        }
+    }
+    header("Location: index.php");
+    exit;
+}
+
+$flash = $_SESSION['flash_message'] ?? null;
+unset($_SESSION['flash_message']);
+
 $role = $_SESSION['role'] ?? '';
 $username = $_SESSION['username'] ?? '';
 $user_district = $_SESSION['district'] ?? '';
+
 
 /*
 |--------------------------------------------------------------------------
@@ -888,31 +924,10 @@ if ($role === 'National Authority') {
 
 <div class="container">
 
-<?php if (isset($_GET['saved'])): ?>
-    <div style="background:#dcfce7; border:1px solid #86efac; color:#15803d; padding:12px 18px; border-radius:8px; margin-bottom:20px; font-weight:600; display:flex; justify-content:space-between; align-items:center;">
-        <span>✓ Camp details, intake, and requests processed successfully.</span>
-        <button type="button" onclick="this.parentElement.remove()" style="background:none; border:none; color:#15803d; font-size:16px; cursor:pointer;">✕</button>
-    </div>
-<?php endif; ?>
-
-<?php if (isset($_GET['deleted'])): ?>
-    <div style="background:#fee2e2; border:1px solid #fca5a5; color:#b91c1c; padding:12px 18px; border-radius:8px; margin-bottom:20px; font-weight:600; display:flex; justify-content:space-between; align-items:center;">
-        <span>✓ Camp location <?php echo !empty($_GET['camp_name']) ? '"' . htmlspecialchars($_GET['camp_name']) . '" ' : ''; ?>was deleted successfully.</span>
-        <button type="button" onclick="this.parentElement.remove()" style="background:none; border:none; color:#b91c1c; font-size:16px; cursor:pointer;">✕</button>
-    </div>
-<?php endif; ?>
-
-<?php if (isset($_GET['deleted_item'])): ?>
-    <div style="background:#fee2e2; border:1px solid #fca5a5; color:#b91c1c; padding:12px 18px; border-radius:8px; margin-bottom:20px; font-weight:600; display:flex; justify-content:space-between; align-items:center;">
-        <span>✓ Relief supply item <?php echo !empty($_GET['item_name']) ? '"' . htmlspecialchars($_GET['item_name']) . '" ' : ''; ?>was deleted successfully.</span>
-        <button type="button" onclick="this.parentElement.remove()" style="background:none; border:none; color:#b91c1c; font-size:16px; cursor:pointer;">✕</button>
-    </div>
-<?php endif; ?>
-
-<?php if (isset($_GET['deleted_person'])): ?>
-    <div style="background:#fee2e2; border:1px solid #fca5a5; color:#b91c1c; padding:12px 18px; border-radius:8px; margin-bottom:20px; font-weight:600; display:flex; justify-content:space-between; align-items:center;">
-        <span>✓ Displaced person / family <?php echo !empty($_GET['person_name']) ? '"' . htmlspecialchars($_GET['person_name']) . '" ' : ''; ?>was deleted successfully and camp population was updated.</span>
-        <button type="button" onclick="this.parentElement.remove()" style="background:none; border:none; color:#b91c1c; font-size:16px; cursor:pointer;">✕</button>
+<?php if ($flash): ?>
+    <div id="flashAlertBanner" style="background:<?php echo $flash['type'] === 'success' ? '#dcfce7' : '#fee2e2'; ?>; border:1px solid <?php echo $flash['type'] === 'success' ? '#86efac' : '#fca5a5'; ?>; color:<?php echo $flash['type'] === 'success' ? '#15803d' : '#b91c1c'; ?>; padding:12px 18px; border-radius:8px; margin-bottom:20px; font-weight:600; display:flex; justify-content:space-between; align-items:center; transition:opacity 0.4s ease;">
+        <span><?php echo htmlspecialchars($flash['message']); ?></span>
+        <button type="button" onclick="this.parentElement.remove()" style="background:none; border:none; color:<?php echo $flash['type'] === 'success' ? '#15803d' : '#b91c1c'; ?>; font-size:16px; cursor:pointer; line-height:1;" title="Dismiss">&times;</button>
     </div>
 <?php endif; ?>
 
@@ -958,7 +973,7 @@ if ($role === 'National Authority') {
                             data-lng="<?php echo htmlspecialchars($c['longitude']); ?>"
                             data-pop="<?php echo (int)$c['current_population']; ?>"
                         >
-                            📍 <?php echo htmlspecialchars($c['camp_name']); ?> (Cap: <?php echo (int)$c['capacity']; ?>, Pop: <?php echo (int)$c['current_population']; ?>)
+                            <?php echo htmlspecialchars($c['camp_name']); ?> (Cap: <?php echo (int)$c['capacity']; ?>, Pop: <?php echo (int)$c['current_population']; ?>)
                         </option>
                     <?php endforeach; ?>
                 </select>
@@ -1007,10 +1022,10 @@ if ($role === 'National Authority') {
 
             <div id="campActionButtons" style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;">
                 <button type="button" id="updateCampOnlyBtn" onclick="submitCampUpdateOnly()" style="display:none; background:#0284c7; color:white; border:none; padding:8px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:600;">
-                    💾 Save Modified Details
+                    Save Modified Details
                 </button>
                 <button type="button" id="deleteCampBtn" onclick="deleteSelectedCamp()" style="display:none; background:#ef4444; color:white; border:none; padding:8px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:600;">
-                    🗑️ Delete Location
+                    Delete Location
                 </button>
                 <button type="button" id="resetCampBtn" onclick="resetToNewCamp()" style="display:none; background:#64748b; color:white; border:none; padding:8px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:600;">
                     ↺ Switch to New Camp Mode
@@ -1116,7 +1131,7 @@ if ($role === 'National Authority') {
                                 type="button"
                                 onclick="removeItem(this)"
                             >
-                                ✕
+                                
                             </button>
 
                         </td>
@@ -1225,14 +1240,14 @@ if ($role === 'National Authority') {
                                 style="background:#0284c7; margin-right:5px; border:none; cursor:pointer;"
                                 onclick="editCampFromTable(<?php echo htmlspecialchars(json_encode($c)); ?>)"
                             >
-                                ✏️ Modify Details
+                                Modify Details
                             </button>
                             <a
                                 href="actions.php?action=delete_camp&id=<?php echo (int)$c['id']; ?>"
                                 class="btn-action reject"
                                 onclick="return confirm('Are you sure you want to delete camp location <?php echo htmlspecialchars(addslashes($c['camp_name'])); ?>? This will remove the map marker and all associated records.');"
                             >
-                                🗑️ Delete Location
+                                Delete Location
                             </a>
                         </td>
                     </tr>
@@ -1251,7 +1266,7 @@ if ($role === 'National Authority') {
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:10px;">
         <div>
             <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
-                <span>👥 My Registered Families & People</span>
+                <span>My Registered Families & People</span>
             </h2>
             <p style="margin:4px 0 0 0; color:#64748b; font-size:13px;">
                 Intakes recorded at your camps. View detailed dossiers or delete records when families depart.
@@ -1291,13 +1306,13 @@ if ($role === 'National Authority') {
                         </td>
                         <td>
                             <span style="background:#f1f5f9; color:#0f172a; padding:2px 8px; border-radius:4px; font-weight:600; font-size:13px;">
-                                👥 <?php echo (int)$fam['members_count']; ?>
+                                <?php echo (int)$fam['members_count']; ?>
                             </span>
                         </td>
                         <td>
                             <?php if ((int)$fam['infants_count'] > 0): ?>
                                 <span style="background:#fef3c7; color:#92400e; padding:3px 8px; border-radius:4px; font-weight:700; font-size:12px;">
-                                    🍼 <?php echo (int)$fam['infants_count']; ?>
+                                    Infants: <?php echo (int)$fam['infants_count']; ?>
                                 </span>
                             <?php else: ?>
                                 <span style="color:#94a3b8; font-size:12px;">0</span>
@@ -1306,7 +1321,7 @@ if ($role === 'National Authority') {
                         <td>
                             <?php if ($has_special): ?>
                                 <div style="background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; padding:4px 8px; border-radius:4px; font-size:12px; font-weight:600;">
-                                    ⚠️ <?php echo htmlspecialchars($special); ?>
+                                    <?php echo htmlspecialchars($special); ?>
                                 </div>
                             <?php else: ?>
                                 <span style="color:#94a3b8; font-style:italic; font-size:12px;">None reported</span>
@@ -1319,7 +1334,7 @@ if ($role === 'National Authority') {
                                 onclick="openPersonModal(<?php echo htmlspecialchars(json_encode($fam)); ?>)"
                                 title="View complete dossier for this person"
                             >
-                                👁️ View
+                                View
                             </button>
                             <button
                                 type="button"
@@ -1327,7 +1342,7 @@ if ($role === 'National Authority') {
                                 onclick="deletePerson(<?php echo (int)$fam['id']; ?>, '<?php echo htmlspecialchars(addslashes($fam['family_head_name'])); ?>')"
                                 title="Delete this person/family record"
                             >
-                                🗑️ Delete
+                                Delete
                             </button>
                         </td>
                     </tr>
@@ -1346,7 +1361,7 @@ if ($role === 'National Authority') {
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:10px;">
         <div>
             <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
-                <span>📦 My Camp Relief Item Requests</span>
+                <span>My Camp Relief Item Requests</span>
             </h2>
             <p style="margin:4px 0 0 0; color:#64748b; font-size:13px;">
                 Supply requisitions dispatched for your camps. Inspect status, quantities, or delete outdated items.
@@ -1399,7 +1414,7 @@ if ($role === 'National Authority') {
                         <td>
                             <?php if (!empty($req['camp_special_needs'])): ?>
                                 <div style="background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; padding:4px 8px; border-radius:4px; font-size:11px; font-weight:500;">
-                                    <strong>⚠️ Special Needs:</strong> <?php echo htmlspecialchars(substr($req['camp_special_needs'], 0, 70)); ?>...
+                                    <strong>Special Needs:</strong> <?php echo htmlspecialchars(substr($req['camp_special_needs'], 0, 70)); ?>...
                                 </div>
                             <?php else: ?>
                                 <span style="color:#94a3b8; font-size:12px; font-style:italic;">None</span>
@@ -1412,7 +1427,7 @@ if ($role === 'National Authority') {
                                 onclick="openItemModal(<?php echo htmlspecialchars(json_encode($req)); ?>, [])"
                                 title="View complete details of this requested item"
                             >
-                                👁️ View
+                                View
                             </button>
                             <button
                                 type="button"
@@ -1420,7 +1435,7 @@ if ($role === 'National Authority') {
                                 onclick="deleteSupplyItem(<?php echo (int)$req['id']; ?>, '<?php echo htmlspecialchars(addslashes($req['item_type'])); ?>')"
                                 title="Delete this relief item request"
                             >
-                                🗑️ Delete
+                                Delete
                             </button>
                         </td>
                     </tr>
@@ -1451,18 +1466,18 @@ if ($role === 'National Authority') {
 
         <!-- View Option Controls -->
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <span style="font-size:13px; font-weight:600; color:#475569; margin-right:4px;">👁️ View Option:</span>
+            <span style="font-size:13px; font-weight:600; color:#475569; margin-right:4px;">View Options:</span>
             <button type="button" class="view-toggle-btn active" id="btnViewAll" onclick="switchDistrictView('all')">
-                📋 View All
+                View All
             </button>
             <button type="button" class="view-toggle-btn" id="btnViewCamps" onclick="switchDistrictView('camps')">
-                📍 View Camps (<?php echo count($district_camps); ?>)
+                View Camps (<?php echo count($district_camps); ?>)
             </button>
             <button type="button" class="view-toggle-btn" id="btnViewItems" onclick="switchDistrictView('items')">
-                📦 View Option: Items (<?php echo count($district_requests); ?>)
+                View Items (<?php echo count($district_requests); ?>)
             </button>
             <button type="button" class="view-toggle-btn" id="btnViewPeople" onclick="switchDistrictView('people')">
-                👥 View Option: People (<?php echo count($district_families); ?>)
+                View People (<?php echo count($district_families); ?>)
             </button>
         </div>
     </div>
@@ -1501,7 +1516,7 @@ if ($role === 'National Authority') {
             <div style="font-size:24px; font-weight:700; color:#1e293b; margin:4px 0;"><?php echo count($district_requests); ?> <span style="font-size:13px; font-weight:500; color:#64748b;">requests</span></div>
             <div style="font-size:12px; color:#475569;">
                 <span style="color:#d97706; font-weight:600;">⏳ <?php echo $pending_count; ?> Pending</span> &bull; 
-                <span style="color:#16a34a; font-weight:600;">✓ <?php echo $approved_count; ?> Approved</span>
+                <span style="color:#16a34a; font-weight:600;"><?php echo $approved_count; ?> Approved</span>
             </div>
         </div>
 
@@ -1510,7 +1525,7 @@ if ($role === 'National Authority') {
             <div style="font-size:24px; font-weight:700; color:#1e293b; margin:4px 0;"><?php echo $total_members; ?> <span style="font-size:13px; font-weight:500; color:#64748b;">people</span></div>
             <div style="font-size:12px; color:#475569;">
                 <span><?php echo count($district_families); ?> families</span> &bull; 
-                <span style="color:#0284c7; font-weight:600;">🍼 <?php echo $total_infants; ?> Infants</span>
+                <span style="color:#0284c7; font-weight:600;">Infants: <?php echo $total_infants; ?></span>
             </div>
         </div>
 
@@ -1518,7 +1533,7 @@ if ($role === 'National Authority') {
             <div style="font-size:12px; font-weight:600; color:#991b1b; text-transform:uppercase;">Uploaded Special Requirements</div>
             <div style="font-size:24px; font-weight:700; color:#b91c1c; margin:4px 0;"><?php echo $special_needs_count; ?> <span style="font-size:13px; font-weight:500; color:#991b1b;">cases</span></div>
             <div style="font-size:12px; color:#b91c1c; font-weight:500;">
-                ⚠️ Critical medical, dietary, & disability needs
+                Critical medical, dietary, & disability needs
             </div>
         </div>
     </div>
@@ -1528,12 +1543,12 @@ if ($role === 'National Authority') {
         <input 
             type="text" 
             id="districtSearchInput" 
-            placeholder="🔍 Live filter by Item name, Person / Family head, Camp, or Special requirement keyword..." 
+            placeholder="Live filter by Item name, Person / Family head, Camp, or Special requirement keyword..." 
             oninput="filterDistrictRecords()" 
             style="width:100%; padding:10px 14px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; background:#fff;"
         >
         <button type="button" onclick="clearDistrictSearch()" style="padding:10px 14px; background:#e2e8f0; color:#475569; border:none; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600; white-space:nowrap;">
-            ✕ Clear
+            Clear
         </button>
     </div>
 </div>
@@ -1545,7 +1560,7 @@ if ($role === 'National Authority') {
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
         <div>
             <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
-                <span>📦 View Option: Supply Requests (Items)</span>
+                <span>View Option: Supply Requests (Items)</span>
             </h2>
             <p style="margin:4px 0 0 0; color:#64748b; font-size:13px;">
                 Officer submitted logistics requirements paired with camp-level special requirement details.
@@ -1588,7 +1603,7 @@ if ($role === 'National Authority') {
                         </td>
                         <td>
                             <span style="color:#475569; font-size:13px;">
-                                👮 <?php echo htmlspecialchars($req['officer_name'] ?? 'Officer'); ?>
+                                <?php echo htmlspecialchars($req['officer_name'] ?? 'Officer'); ?>
                             </span>
                         </td>
                         <td>
@@ -1605,7 +1620,7 @@ if ($role === 'National Authority') {
                         <td>
                             <?php if (!empty($req['camp_special_needs'])): ?>
                                 <div style="background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; padding:6px 10px; border-radius:6px; font-size:12px; font-weight:500; line-height:1.4; max-height:80px; overflow-y:auto;">
-                                    <strong>⚠️ Special Requirements:</strong><br>
+                                    <strong>Special Requirements:</strong><br>
                                     <?php echo nl2br(htmlspecialchars($req['camp_special_needs'])); ?>
                                 </div>
                             <?php else: ?>
@@ -1620,7 +1635,7 @@ if ($role === 'National Authority') {
                                 onclick="openItemModal(<?php echo htmlspecialchars(json_encode($req)); ?>, <?php echo htmlspecialchars(json_encode($camp_families_map[(int)$req['camp_id']] ?? [])); ?>)"
                                 title="View complete details of this requested item and associated camp special needs"
                             >
-                                👁️ View
+                                View
                             </button>
 
                             <?php if ($req['status'] === 'Pending'): ?>
@@ -1630,7 +1645,7 @@ if ($role === 'National Authority') {
                                     onclick="return confirm('Approve this supply request?');"
                                     title="Approve supply dispatch"
                                 >
-                                    ✓
+                                    
                                 </a>
                                 <a
                                     href="actions.php?action=reject_req&id=<?php echo (int)$req['id']; ?>"
@@ -1638,7 +1653,7 @@ if ($role === 'National Authority') {
                                     onclick="return confirm('Reject this supply request?');"
                                     title="Reject request"
                                 >
-                                    ✕
+                                    
                                 </a>
                             <?php endif; ?>
 
@@ -1649,7 +1664,7 @@ if ($role === 'National Authority') {
                                 onclick="deleteSupplyItem(<?php echo (int)$req['id']; ?>, '<?php echo htmlspecialchars(addslashes($req['item_type'])); ?>')"
                                 title="Delete relief item request"
                             >
-                                🗑️ Delete
+                                Delete
                             </button>
                         </td>
                     </tr>
@@ -1668,7 +1683,7 @@ if ($role === 'National Authority') {
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
         <div>
             <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
-                <span>👥 View Option: Camp People & Special Requirements</span>
+                <span>View Option: Camp People & Special Requirements</span>
             </h2>
             <p style="margin:4px 0 0 0; color:#64748b; font-size:13px;">
                 Officer uploaded family intakes with full visibility into critical medical, infant, dietary, and accessibility details.
@@ -1709,18 +1724,18 @@ if ($role === 'National Authority') {
                         </td>
                         <td>
                             <span style="color:#475569; font-size:13px;">
-                                👮 <?php echo htmlspecialchars($fam['officer_name'] ?? 'Officer'); ?>
+                                <?php echo htmlspecialchars($fam['officer_name'] ?? 'Officer'); ?>
                             </span>
                         </td>
                         <td>
                             <span style="background:#f1f5f9; color:#0f172a; padding:2px 8px; border-radius:4px; font-weight:600; font-size:13px;">
-                                👥 <?php echo (int)$fam['members_count']; ?>
+                                <?php echo (int)$fam['members_count']; ?>
                             </span>
                         </td>
                         <td>
                             <?php if ((int)$fam['infants_count'] > 0): ?>
                                 <span style="background:#fef3c7; color:#92400e; padding:3px 8px; border-radius:4px; font-weight:700; font-size:12px;">
-                                    🍼 <?php echo (int)$fam['infants_count']; ?>
+                                    Infants: <?php echo (int)$fam['infants_count']; ?>
                                 </span>
                             <?php else: ?>
                                 <span style="color:#94a3b8; font-size:12px;">0</span>
@@ -1729,7 +1744,7 @@ if ($role === 'National Authority') {
                         <td>
                             <?php if ($has_special): ?>
                                 <div style="background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; padding:6px 10px; border-radius:6px; font-size:13px; font-weight:600; line-height:1.4;">
-                                    ⚠️ <?php echo htmlspecialchars($special); ?>
+                                    <?php echo htmlspecialchars($special); ?>
                                 </div>
                             <?php else: ?>
                                 <span style="color:#94a3b8; font-style:italic; font-size:12px;">None reported</span>
@@ -1743,7 +1758,7 @@ if ($role === 'National Authority') {
                                 onclick="openPersonModal(<?php echo htmlspecialchars(json_encode($fam)); ?>)"
                                 title="View complete dossier for this person / family"
                             >
-                                👁️ View
+                                View
                             </button>
 
                             <!-- Delete Option Button -->
@@ -1753,7 +1768,7 @@ if ($role === 'National Authority') {
                                 onclick="deletePerson(<?php echo (int)$fam['id']; ?>, '<?php echo htmlspecialchars(addslashes($fam['family_head_name'])); ?>')"
                                 title="Delete displaced person/family record"
                             >
-                                🗑️ Delete
+                                Delete
                             </button>
                         </td>
                     </tr>
@@ -1772,7 +1787,7 @@ if ($role === 'National Authority') {
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
         <div>
             <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
-                <span>📍 View Option: Camp Locations Management</span>
+                <span>View Option: Camp Locations Management</span>
             </h2>
             <p style="margin:4px 0 0 0; color:#64748b; font-size:13px;">
                 Inspect, modify camp operational details, update coordinates, or delete map locations in <?php echo htmlspecialchars($user_district); ?>.
@@ -1799,7 +1814,7 @@ if ($role === 'National Authority') {
                 <?php foreach ($district_camps as $c): ?>
                     <tr class="district-camp-row" data-search="<?php echo htmlspecialchars(strtolower($c['camp_name'] . ' ' . $c['district'] . ' ' . ($c['officer_name'] ?? ''))); ?>">
                         <td>
-                            <strong style="color:#0f172a; font-size:14px;">📍 <?php echo htmlspecialchars($c['camp_name']); ?></strong><br>
+                            <strong style="color:#0f172a; font-size:14px;"><?php echo htmlspecialchars($c['camp_name']); ?></strong><br>
                             <span style="color:#64748b; font-size:11px;"><?php echo htmlspecialchars($c['district']); ?> District</span>
                         </td>
                         <td>
@@ -1819,7 +1834,7 @@ if ($role === 'National Authority') {
                         </td>
                         <td>
                             <span style="color:#475569; font-size:13px;">
-                                👮 <?php echo htmlspecialchars($c['officer_name'] ?? 'Officer'); ?>
+                                <?php echo htmlspecialchars($c['officer_name'] ?? 'Officer'); ?>
                             </span>
                         </td>
                         <td style="white-space:nowrap; text-align:center;">
@@ -1830,7 +1845,7 @@ if ($role === 'National Authority') {
                                 onclick="openEditCampModal(<?php echo htmlspecialchars(json_encode($c)); ?>)"
                                 title="Modify camp details and coordinates"
                             >
-                                ✏️ Modify Details
+                                Modify Details
                             </button>
                             <button 
                                 type="button" 
@@ -1838,7 +1853,7 @@ if ($role === 'National Authority') {
                                 onclick="deleteCampLocation(<?php echo (int)$c['id']; ?>, '<?php echo htmlspecialchars(addslashes($c['camp_name'])); ?>')"
                                 title="Delete camp location from map"
                             >
-                                🗑️ Delete Location
+                                Delete Location
                             </button>
                         </td>
                     </tr>
@@ -1869,21 +1884,21 @@ if ($role === 'National Authority') {
 
         <!-- View Option Controls -->
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <span style="font-size:13px; font-weight:600; color:#475569; margin-right:4px;">👁️ View Option:</span>
+            <span style="font-size:13px; font-weight:600; color:#475569; margin-right:4px;">View Options:</span>
             <button type="button" class="view-toggle-btn active" id="btnNatViewAll" onclick="switchNationalView('all')">
-                📋 View All Data
+                View All Data
             </button>
             <button type="button" class="view-toggle-btn" id="btnNatViewCamps" onclick="switchNationalView('camps')">
-                📍 View Camps (<?php echo count($national_camps_list); ?>)
+                View Camps (<?php echo count($national_camps_list); ?>)
             </button>
             <button type="button" class="view-toggle-btn" id="btnNatViewItems" onclick="switchNationalView('items')">
-                📦 View Items (<?php echo count($national_requests); ?>)
+                View Items (<?php echo count($national_requests); ?>)
             </button>
             <button type="button" class="view-toggle-btn" id="btnNatViewPeople" onclick="switchNationalView('people')">
-                👥 View People (<?php echo count($national_families); ?>)
+                View People (<?php echo count($national_families); ?>)
             </button>
             <button type="button" class="view-toggle-btn" id="btnNatViewMap" onclick="switchNationalView('map')">
-                🗺️ National Map
+                National Map
             </button>
         </div>
     </div>
@@ -1901,7 +1916,7 @@ if ($role === 'National Authority') {
             <div style="font-size:26px; font-weight:700; color:#1e293b; margin:4px 0;"><?php echo number_format($total_population); ?> <span style="font-size:13px; font-weight:500; color:#64748b;">individuals</span></div>
             <div style="font-size:12px; color:#475569;">
                 <span><?php echo count($national_families); ?> families</span> &bull; 
-                <span style="color:#0284c7; font-weight:600;">🍼 <?php echo $total_infants_national; ?> Infants</span>
+                <span style="color:#0284c7; font-weight:600;">Infants: <?php echo $total_infants_national; ?></span>
             </div>
         </div>
 
@@ -1927,22 +1942,22 @@ if ($role === 'National Authority') {
             onchange="filterNationalRecords()" 
             style="padding:10px 14px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; background:#fff; min-width:180px;"
         >
-            <option value="">🌐 All Districts (National)</option>
+            <option value="">All Districts (National)</option>
             <?php foreach ($national_districts as $dst): ?>
-                <option value="<?php echo htmlspecialchars(strtolower($dst)); ?>">📍 <?php echo htmlspecialchars($dst); ?> District</option>
+                <option value="<?php echo htmlspecialchars(strtolower($dst)); ?>"><?php echo htmlspecialchars($dst); ?> District</option>
             <?php endforeach; ?>
         </select>
 
         <input 
             type="text" 
             id="nationalSearchInput" 
-            placeholder="🔍 Live filter nationwide by Item Name, Person / Family Head Name, Camp Location, or Special Requirements..." 
+            placeholder="Live filter nationwide by Item Name, Person / Family Head Name, Camp Location, or Special Requirements..." 
             oninput="filterNationalRecords()" 
             style="flex:1; min-width:280px; padding:10px 14px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; background:#fff;"
         >
 
         <button type="button" onclick="clearNationalSearch()" style="padding:10px 14px; background:#e2e8f0; color:#475569; border:none; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600; white-space:nowrap;">
-            ✕ Clear
+            Clear
         </button>
     </div>
 </div>
@@ -1965,7 +1980,7 @@ if ($role === 'National Authority') {
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
         <div>
             <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
-                <span>📦 Nationwide Relief Supply Items & Quantities</span>
+                <span>Nationwide Relief Supply Items & Quantities</span>
             </h2>
             <p style="margin:4px 0 0 0; color:#64748b; font-size:13px;">
                 Itemized inventory of all relief supplies requested across every district, including requested quantities, destinations, and status.
@@ -2000,7 +2015,7 @@ if ($role === 'National Authority') {
                         </td>
                         <td>
                             <span style="background:#f1f5f9; color:#0f172a; padding:4px 10px; border-radius:6px; font-weight:700; font-size:14px; display:inline-block;">
-                                📦 <?php echo number_format((int)$req['quantity']); ?>
+                                <?php echo number_format((int)$req['quantity']); ?>
                             </span>
                         </td>
                         <td>
@@ -2016,7 +2031,7 @@ if ($role === 'National Authority') {
                         </td>
                         <td>
                             <span style="color:#475569; font-size:13px;">
-                                👮 <?php echo htmlspecialchars($req['officer_name'] ?? 'Officer'); ?>
+                                <?php echo htmlspecialchars($req['officer_name'] ?? 'Officer'); ?>
                             </span>
                         </td>
                         <td>
@@ -2038,7 +2053,7 @@ if ($role === 'National Authority') {
                                 onclick="openNationalItemModal(<?php echo htmlspecialchars(json_encode($req)); ?>, <?php echo htmlspecialchars(json_encode($national_camp_families_map[(int)$req['camp_id']] ?? [])); ?>)"
                                 title="View full details and quantities for this item"
                             >
-                                👁️ View
+                                View
                             </button>
 
                             <!-- Delete Option Button -->
@@ -2048,7 +2063,7 @@ if ($role === 'National Authority') {
                                 onclick="deleteSupplyItem(<?php echo (int)$req['id']; ?>, '<?php echo htmlspecialchars(addslashes($req['item_type'])); ?>')"
                                 title="Delete relief item request"
                             >
-                                🗑️ Delete
+                                Delete
                             </button>
                         </td>
                     </tr>
@@ -2067,7 +2082,7 @@ if ($role === 'National Authority') {
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
         <div>
             <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
-                <span>👥 Nationwide Displaced People & Demographic Quantities</span>
+                <span>Nationwide Displaced People & Demographic Quantities</span>
             </h2>
             <p style="margin:4px 0 0 0; color:#64748b; font-size:13px;">
                 Complete record of all displaced families, member quantities, infant quantities, and special requirements reported by camp officers.
@@ -2116,18 +2131,18 @@ if ($role === 'National Authority') {
                         </td>
                         <td>
                             <span style="color:#475569; font-size:13px;">
-                                👮 <?php echo htmlspecialchars($fam['officer_name'] ?? 'Officer'); ?>
+                                <?php echo htmlspecialchars($fam['officer_name'] ?? 'Officer'); ?>
                             </span>
                         </td>
                         <td>
                             <span style="background:#f1f5f9; color:#0f172a; padding:3px 10px; border-radius:4px; font-weight:700; font-size:14px; display:inline-block;">
-                                👥 <?php echo (int)$fam['members_count']; ?> people
+                                <?php echo (int)$fam['members_count']; ?> people
                             </span>
                         </td>
                         <td>
                             <?php if ((int)$fam['infants_count'] > 0): ?>
                                 <span style="background:#fef3c7; color:#92400e; padding:3px 8px; border-radius:4px; font-weight:700; font-size:12px; display:inline-block;">
-                                    🍼 <?php echo (int)$fam['infants_count']; ?>
+                                    Infants: <?php echo (int)$fam['infants_count']; ?>
                                 </span>
                             <?php else: ?>
                                 <span style="color:#94a3b8; font-size:12px;">0</span>
@@ -2136,7 +2151,7 @@ if ($role === 'National Authority') {
                         <td>
                             <?php if ($has_special): ?>
                                 <div style="background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; padding:6px 10px; border-radius:6px; font-size:12px; font-weight:600; line-height:1.4;">
-                                    ⚠️ <?php echo htmlspecialchars($special); ?>
+                                    <?php echo htmlspecialchars($special); ?>
                                 </div>
                             <?php else: ?>
                                 <span style="color:#94a3b8; font-style:italic; font-size:12px;">None reported</span>
@@ -2150,7 +2165,7 @@ if ($role === 'National Authority') {
                                 onclick="openNationalPersonModal(<?php echo htmlspecialchars(json_encode($fam)); ?>)"
                                 title="View complete dossier for this person / family"
                             >
-                                👁️ View
+                                View
                             </button>
 
                             <!-- Delete Option Button -->
@@ -2160,7 +2175,7 @@ if ($role === 'National Authority') {
                                 onclick="deletePerson(<?php echo (int)$fam['id']; ?>, '<?php echo htmlspecialchars(addslashes($fam['family_head_name'])); ?>')"
                                 title="Delete displaced person/family record"
                             >
-                                🗑️ Delete
+                                Delete
                             </button>
                         </td>
                     </tr>
@@ -2179,7 +2194,7 @@ if ($role === 'National Authority') {
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
         <div>
             <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
-                <span>📍 Nationwide Camp Locations & Spatial Registry</span>
+                <span>Nationwide Camp Locations & Spatial Registry</span>
             </h2>
             <p style="margin:4px 0 0 0; color:#64748b; font-size:13px;">
                 Direct national operational management: modify camp parameters, update spatial coordinates, or delete map locations across all districts.
@@ -2210,7 +2225,7 @@ if ($role === 'National Authority') {
                         data-district="<?php echo htmlspecialchars(strtolower($c['district'])); ?>"
                     >
                         <td>
-                            <strong style="color:#0f172a; font-size:14px;">📍 <?php echo htmlspecialchars($c['camp_name']); ?></strong>
+                            <strong style="color:#0f172a; font-size:14px;"><?php echo htmlspecialchars($c['camp_name']); ?></strong>
                         </td>
                         <td>
                             <span style="background:#e2e8f0; color:#334155; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600;">
@@ -2234,7 +2249,7 @@ if ($role === 'National Authority') {
                         </td>
                         <td>
                             <span style="color:#475569; font-size:13px;">
-                                👮 <?php echo htmlspecialchars($c['officer_name'] ?? 'Officer'); ?>
+                                <?php echo htmlspecialchars($c['officer_name'] ?? 'Officer'); ?>
                             </span>
                         </td>
                         <td style="white-space:nowrap; text-align:center;">
@@ -2245,7 +2260,7 @@ if ($role === 'National Authority') {
                                 onclick="openEditCampModal(<?php echo htmlspecialchars(json_encode($c)); ?>)"
                                 title="Modify camp details and coordinates"
                             >
-                                ✏️ Modify Details
+                                Modify Details
                             </button>
                             <button 
                                 type="button" 
@@ -2253,7 +2268,7 @@ if ($role === 'National Authority') {
                                 onclick="deleteCampLocation(<?php echo (int)$c['id']; ?>, '<?php echo htmlspecialchars(addslashes($c['camp_name'])); ?>')"
                                 title="Delete camp location from map"
                             >
-                                🗑️ Delete Location
+                                Delete Location
                             </button>
                         </td>
                     </tr>
@@ -2273,7 +2288,7 @@ if ($role === 'National Authority') {
         <!-- Modal Header -->
         <div id="nationalModalHeader" style="padding:16px 22px; background:#0f172a; color:#fff; display:flex; justify-content:space-between; align-items:center;">
             <h3 id="nationalModalTitle" style="margin:0; font-size:17px; font-weight:700; color:#fff;">National Intelligence Record</h3>
-            <button type="button" onclick="closeNationalModal()" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; line-height:1; width:30px; height:30px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">✕</button>
+            <button type="button" onclick="closeNationalModal()" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; line-height:1; width:30px; height:30px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">&times;</button>
         </div>
         <!-- Modal Body -->
         <div id="nationalModalBody" style="padding:22px; max-height:75vh; overflow-y:auto;">
@@ -2314,9 +2329,9 @@ if ($role === 'National Authority') {
         <!-- Modal Header -->
         <div style="padding:16px 22px; background:#1e293b; color:#fff; display:flex; justify-content:space-between; align-items:center;">
             <h3 id="universalCampModalTitle" style="margin:0; font-size:17px; font-weight:700; color:#fff; display:flex; align-items:center; gap:8px;">
-                <span>✏️ Modify Camp Location & Details</span>
+                <span>Modify Camp Location & Details</span>
             </h3>
-            <button type="button" onclick="closeUniversalCampModal()" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; line-height:1; width:30px; height:30px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">✕</button>
+            <button type="button" onclick="closeUniversalCampModal()" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; line-height:1; width:30px; height:30px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">&times;</button>
         </div>
         
         <!-- Modal Form -->
@@ -2395,14 +2410,14 @@ if ($role === 'National Authority') {
             <!-- Modal Footer -->
             <div style="padding:14px 22px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
                 <button type="button" id="btnDeleteFromModal" onclick="deleteCampFromModal()" style="padding:8px 16px; background:#fee2e2; color:#b91c1c; border:1px solid #fecaca; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">
-                    🗑️ Delete Map Location
+                    Delete Map Location
                 </button>
                 <div style="display:flex; gap:10px;">
                     <button type="button" onclick="closeUniversalCampModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">
                         Cancel
                     </button>
                     <button type="submit" style="padding:8px 18px; background:#0284c7; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">
-                        💾 Save Changes
+                        Save Changes
                     </button>
                 </div>
             </div>
@@ -2418,7 +2433,7 @@ if ($role === 'National Authority') {
         <!-- Modal Header -->
         <div id="districtModalHeader" style="padding:16px 22px; background:#1e40af; color:#fff; display:flex; justify-content:space-between; align-items:center;">
             <h3 id="districtModalTitle" style="margin:0; font-size:17px; font-weight:700; color:#fff;">View Details</h3>
-            <button type="button" onclick="closeDistrictModal()" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; line-height:1; width:30px; height:30px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">✕</button>
+            <button type="button" onclick="closeDistrictModal()" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; line-height:1; width:30px; height:30px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">&times;</button>
         </div>
         <!-- Modal Body -->
         <div id="districtModalBody" style="padding:22px; max-height:75vh; overflow-y:auto;">
@@ -2485,7 +2500,7 @@ function addItem() {
                 type="button"
                 onclick="removeItem(this)"
             >
-                ✕
+                
             </button>
 
         </td>
@@ -2542,7 +2557,7 @@ function openEditCampModal(camp) {
     if (offEl) offEl.innerText = camp.officer_name || 'Camp Officer';
 
     if (titleEl) {
-        titleEl.innerHTML = '<span>✏️ Modify Camp: ' + escapeHtml(camp.camp_name || 'Location') + '</span>';
+        titleEl.innerHTML = '<span>Modify Camp: ' + escapeHtml(camp.camp_name || 'Location') + '</span>';
     }
 
     modal.style.display = 'flex';
@@ -2598,13 +2613,13 @@ function openItemModal(req, families) {
     const footer = document.getElementById('districtModalFooter');
     if (!modal || !title || !body) return;
 
-    title.innerHTML = '📦 Relief Supply Item: ' + escapeHtml(req.item_type);
+    title.innerHTML = 'Relief Supply Item: ' + escapeHtml(req.item_type);
 
     let statusBadge = '<span style="background:#fef9c3; color:#854d0e; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">' + escapeHtml(req.status) + '</span>';
     if (req.status === 'Approved') {
-        statusBadge = '<span style="background:#dcfce7; color:#166534; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">✓ Approved</span>';
+        statusBadge = '<span style="background:#dcfce7; color:#166534; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">Approved</span>';
     } else if (req.status === 'Rejected') {
-        statusBadge = '<span style="background:#fee2e2; color:#991b1b; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">✕ Rejected</span>';
+        statusBadge = '<span style="background:#fee2e2; color:#991b1b; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">Rejected</span>';
     }
 
     const famsWithSpecial = (families || []).filter(function(f) {
@@ -2617,27 +2632,27 @@ function openItemModal(req, families) {
         let listItems = famsWithSpecial.map(function(f) {
             return '<div style="background:#fff; border:1px solid #fecaca; border-radius:6px; padding:10px 14px; margin-bottom:8px;">' +
                 '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
-                    '<strong style="color:#0f172a; font-size:13px;">👤 ' + escapeHtml(f.family_head_name) + '</strong>' +
+                    '<strong style="color:#0f172a; font-size:13px;">' + escapeHtml(f.family_head_name) + '</strong>' +
                     '<span style="font-size:11px; color:#64748b;">' +
-                        parseInt(f.members_count) + ' members ' + (parseInt(f.infants_count) > 0 ? '&bull; 🍼 ' + parseInt(f.infants_count) + ' infants' : '') +
+                        parseInt(f.members_count) + ' members ' + (parseInt(f.infants_count) > 0 ? '&bull; Infants: ' + parseInt(f.infants_count) + ' infants' : '') +
                     '</span>' +
                 '</div>' +
                 '<div style="color:#b91c1c; font-size:13px; font-weight:600;">' +
-                    '⚠️ ' + escapeHtml(f.special_needs_details) +
+                    escapeHtml(f.special_needs_details) +
                 '</div>' +
             '</div>';
         }).join('');
 
         specialNeedsHtml = '<div style="margin-top:18px; background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; padding:14px;">' +
             '<div style="font-weight:700; color:#991b1b; font-size:13px; margin-bottom:10px; display:flex; align-items:center; gap:6px;">' +
-                '⚠️ Camp Officer Uploaded Special Requirements (' + famsWithSpecial.length + ' Cases in this Camp):' +
+                'Camp Officer Uploaded Special Requirements (' + famsWithSpecial.length + ' Cases in this Camp):' +
             '</div>' +
             listItems +
         '</div>';
     } else if (req.camp_special_needs && req.camp_special_needs.trim() !== '') {
         specialNeedsHtml = '<div style="margin-top:18px; background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; padding:14px;">' +
             '<div style="font-weight:700; color:#991b1b; font-size:13px; margin-bottom:6px;">' +
-                '⚠️ Camp Special Requirements:' +
+                'Camp Special Requirements:' +
             '</div>' +
             '<div style="color:#b91c1c; font-size:13px; font-weight:600;">' +
                 escapeHtml(req.camp_special_needs) +
@@ -2645,7 +2660,7 @@ function openItemModal(req, families) {
         '</div>';
     } else {
         specialNeedsHtml = '<div style="margin-top:18px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px; color:#64748b; font-size:13px;">' +
-            '✓ No special medical, mobility, or infant requirements currently reported for this camp location.' +
+            'No special medical, mobility, or infant requirements currently reported for this camp location.' +
         '</div>';
     }
 
@@ -2667,10 +2682,10 @@ function openItemModal(req, families) {
         '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0; margin-bottom:14px;">' +
             '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Camp & Logistics Context</div>' +
             '<div style="margin-top:6px; font-size:13px; color:#334155; line-height:1.6;">' +
-                '<div>📍 <strong>Camp Name:</strong> ' + escapeHtml(req.camp_name) + ' (' + escapeHtml(req.district) + ')</div>' +
-                '<div>👥 <strong>Occupancy:</strong> ' + parseInt(req.current_population) + ' people / Capacity: ' + parseInt(req.capacity) + '</div>' +
-                '<div>👮 <strong>Requested By Officer:</strong> ' + escapeHtml(req.officer_name || 'Camp Officer') + '</div>' +
-                '<div>📅 <strong>Submitted:</strong> ' + escapeHtml(req.created_at || 'Recently') + '</div>' +
+                '<div><strong>Camp Name:</strong> ' + escapeHtml(req.camp_name) + ' (' + escapeHtml(req.district) + ')</div>' +
+                '<div><strong>Occupancy:</strong> ' + parseInt(req.current_population) + ' people / Capacity: ' + parseInt(req.capacity) + '</div>' +
+                '<div><strong>Requested By Officer:</strong> ' + escapeHtml(req.officer_name || 'Camp Officer') + '</div>' +
+                '<div><strong>Submitted:</strong> ' + escapeHtml(req.created_at || 'Recently') + '</div>' +
             '</div>' +
         '</div>' +
 
@@ -2681,16 +2696,16 @@ function openItemModal(req, families) {
     if (req.status === 'Pending') {
         actionButtons = 
             '<a href="actions.php?action=approve_req&id=' + parseInt(req.id) + '" class="btn-action approve" onclick="return confirm(\'Approve this supply request?\')">' +
-                '✓ Approve Request' +
+                'Approve Request' +
             '</a>' +
             '<a href="actions.php?action=reject_req&id=' + parseInt(req.id) + '" class="btn-action reject" onclick="return confirm(\'Reject this supply request?\')">' +
-                '✕ Reject Request' +
+                'Reject Request' +
             '</a>';
     }
     <?php endif; ?>
 
     footer.innerHTML = 
-        '<button type="button" class="btn-action reject" style="margin-right:auto;" onclick="deleteSupplyItem(' + parseInt(req.id) + ', \'' + escapeHtml(req.item_type) + '\')">🗑️ Delete Supply Request</button>' +
+        '<button type="button" class="btn-action reject" style="margin-right:auto;" onclick="deleteSupplyItem(' + parseInt(req.id) + ', \'' + escapeHtml(req.item_type) + '\')">Delete Supply Request</button>' +
         actionButtons +
         '<button type="button" onclick="closeDistrictModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">' +
             'Close' +
@@ -2706,7 +2721,7 @@ function openPersonModal(fam) {
     const footer = document.getElementById('districtModalFooter');
     if (!modal || !title || !body) return;
 
-    title.innerHTML = '👥 Person / Family Dossier: ' + escapeHtml(fam.family_head_name);
+    title.innerHTML = 'Person / Family Dossier: ' + escapeHtml(fam.family_head_name);
 
     const special = (fam.special_needs_details || '').trim();
     const hasSpecial = special !== '' && special.toLowerCase() !== 'none';
@@ -2716,7 +2731,7 @@ function openPersonModal(fam) {
         specialBox = 
             '<div style="margin-top:16px; background:#fff1f2; border:2px solid #f43f5e; border-radius:8px; padding:16px;">' +
                 '<div style="font-weight:700; color:#be123c; font-size:14px; margin-bottom:6px; display:flex; align-items:center; gap:6px;">' +
-                    '⚠️ Camp Officer Uploaded Special Requirement Details:' +
+                    'Camp Officer Uploaded Special Requirement Details:' +
                 '</div>' +
                 '<div style="background:#fff; border:1px solid #fecdd3; border-radius:6px; padding:12px 14px; font-size:14px; color:#881337; font-weight:600; line-height:1.5;">' +
                     escapeHtml(special) +
@@ -2728,7 +2743,7 @@ function openPersonModal(fam) {
     } else {
         specialBox = 
             '<div style="margin-top:16px; background:#f0fdf4; border:1px solid #86efac; border-radius:8px; padding:14px; color:#15803d; font-size:13px;">' +
-                '✓ No special medical, mobility, or dietary needs reported for this family.' +
+                'No special medical, mobility, or dietary needs reported for this family.' +
             '</div>';
     }
 
@@ -2741,8 +2756,8 @@ function openPersonModal(fam) {
             '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0;">' +
                 '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Family Members Composition</div>' +
                 '<div style="margin-top:4px; font-size:14px; font-weight:600; color:#0f172a; display:flex; gap:12px; align-items:center;">' +
-                    '<span>👥 Total: ' + parseInt(fam.members_count) + '</span>' +
-                    '<span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">🍼 Infants: ' + parseInt(fam.infants_count) + '</span>' +
+                    '<span>Total: ' + parseInt(fam.members_count) + '</span>' +
+                    '<span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;"> Infants: ' + parseInt(fam.infants_count) + '</span>' +
                 '</div>' +
             '</div>' +
         '</div>' +
@@ -2750,16 +2765,16 @@ function openPersonModal(fam) {
         '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0; margin-bottom:14px;">' +
             '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Camp & Officer Reference</div>' +
             '<div style="margin-top:6px; font-size:13px; color:#334155; line-height:1.6;">' +
-                '<div>📍 <strong>Camp:</strong> ' + escapeHtml(fam.camp_name) + ' (' + escapeHtml(fam.district) + ')</div>' +
-                '<div>👮 <strong>Intake Officer:</strong> ' + escapeHtml(fam.officer_name || 'Camp Officer') + '</div>' +
-                '<div>📅 <strong>Registration Date:</strong> ' + escapeHtml(fam.created_at || 'Recently') + '</div>' +
+                '<div><strong>Camp:</strong> ' + escapeHtml(fam.camp_name) + ' (' + escapeHtml(fam.district) + ')</div>' +
+                '<div><strong>Intake Officer:</strong> ' + escapeHtml(fam.officer_name || 'Camp Officer') + '</div>' +
+                '<div><strong>Registration Date:</strong> ' + escapeHtml(fam.created_at || 'Recently') + '</div>' +
             '</div>' +
         '</div>' +
 
         specialBox;
 
     footer.innerHTML = 
-        '<button type="button" class="btn-action reject" style="margin-right:auto;" onclick="deletePerson(' + parseInt(fam.id) + ', \'' + escapeHtml(fam.family_head_name) + '\')">🗑️ Delete Person / Family Record</button>' +
+        '<button type="button" class="btn-action reject" style="margin-right:auto;" onclick="deletePerson(' + parseInt(fam.id) + ', \'' + escapeHtml(fam.family_head_name) + '\')">Delete Person / Family Record</button>' +
         '<button type="button" onclick="closeDistrictModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">' +
             'Close' +
         '</button>';
@@ -2980,7 +2995,7 @@ if (campMapElement) {
 
             const badge = document.getElementById("campModeBadge");
             if (badge) {
-                badge.innerText = "📍 Coordinates Relocated for Camp #" + currentCampId;
+                badge.innerText = "Coordinates Relocated for Camp #" + currentCampId;
                 badge.style.background = "#fef08a";
                 badge.style.color = "#854d0e";
             }
@@ -3093,11 +3108,11 @@ if (campMapElement) {
                             </div>
                             <div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">
                                 <button type="button" class="popup-modify-btn" style="padding:6px 10px; width:100%; background:#0284c7; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600; font-size:12px;">
-                                    ✏️ Modify Camp Details
+                                    Modify Camp Details
                                 </button>
                                 ${isMyCamp ? `
                                     <a href="actions.php?action=delete_camp&id=${camp.id}" onclick="return confirm('Are you sure you want to delete camp location \\'${escapeHtml(camp.camp_name)}\\'? This will remove the map marker.');" style="display:block; text-align:center; padding:5px 10px; background:#ef4444; color:white; border-radius:4px; text-decoration:none; font-weight:600; font-size:12px;">
-                                        🗑️ Delete Location
+                                        Delete Location
                                     </a>
                                 ` : ''}
                             </div>
@@ -3302,13 +3317,13 @@ function openNationalItemModal(req, families) {
     const footer = document.getElementById('nationalModalFooter');
     if (!modal || !title || !body) return;
 
-    title.innerHTML = '📦 National Relief Item: ' + escapeHtml(req.item_type);
+    title.innerHTML = 'National Relief Item: ' + escapeHtml(req.item_type);
 
     let statusBadge = '<span style="background:#fef9c3; color:#854d0e; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">' + escapeHtml(req.status) + '</span>';
     if (req.status === 'Approved') {
-        statusBadge = '<span style="background:#dcfce7; color:#166534; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">✓ Approved</span>';
+        statusBadge = '<span style="background:#dcfce7; color:#166534; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">Approved</span>';
     } else if (req.status === 'Rejected') {
-        statusBadge = '<span style="background:#fee2e2; color:#991b1b; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">✕ Rejected</span>';
+        statusBadge = '<span style="background:#fee2e2; color:#991b1b; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">Rejected</span>';
     }
 
     const famsWithSpecial = (families || []).filter(function(f) {
@@ -3321,27 +3336,27 @@ function openNationalItemModal(req, families) {
         let listItems = famsWithSpecial.map(function(f) {
             return '<div style="background:#fff; border:1px solid #fecaca; border-radius:6px; padding:10px 14px; margin-bottom:8px;">' +
                 '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
-                    '<strong style="color:#0f172a; font-size:13px;">👤 ' + escapeHtml(f.family_head_name) + '</strong>' +
+                    '<strong style="color:#0f172a; font-size:13px;">' + escapeHtml(f.family_head_name) + '</strong>' +
                     '<span style="font-size:11px; color:#64748b;">' +
-                        parseInt(f.members_count) + ' members ' + (parseInt(f.infants_count) > 0 ? '&bull; 🍼 ' + parseInt(f.infants_count) + ' infants' : '') +
+                        parseInt(f.members_count) + ' members ' + (parseInt(f.infants_count) > 0 ? '&bull; Infants: ' + parseInt(f.infants_count) + ' infants' : '') +
                     '</span>' +
                 '</div>' +
                 '<div style="color:#b91c1c; font-size:13px; font-weight:600;">' +
-                    '⚠️ ' + escapeHtml(f.special_needs_details) +
+                    escapeHtml(f.special_needs_details) +
                 '</div>' +
             '</div>';
         }).join('');
 
         specialNeedsHtml = '<div style="margin-top:18px; background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; padding:14px;">' +
             '<div style="font-weight:700; color:#991b1b; font-size:13px; margin-bottom:10px; display:flex; align-items:center; gap:6px;">' +
-                '⚠️ Camp Officer Uploaded Special Requirements (' + famsWithSpecial.length + ' Cases in this Camp):' +
+                'Camp Officer Uploaded Special Requirements (' + famsWithSpecial.length + ' Cases in this Camp):' +
             '</div>' +
             listItems +
         '</div>';
     } else if (req.camp_special_needs && req.camp_special_needs.trim() !== '') {
         specialNeedsHtml = '<div style="margin-top:18px; background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; padding:14px;">' +
             '<div style="font-weight:700; color:#991b1b; font-size:13px; margin-bottom:6px;">' +
-                '⚠️ Camp Special Requirements:' +
+                'Camp Special Requirements:' +
             '</div>' +
             '<div style="color:#b91c1c; font-size:13px; font-weight:600;">' +
                 escapeHtml(req.camp_special_needs) +
@@ -3349,7 +3364,7 @@ function openNationalItemModal(req, families) {
         '</div>';
     } else {
         specialNeedsHtml = '<div style="margin-top:18px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px; color:#64748b; font-size:13px;">' +
-            '✓ No special medical, mobility, or infant requirements currently reported for this camp location.' +
+            'No special medical, mobility, or infant requirements currently reported for this camp location.' +
         '</div>';
     }
 
@@ -3371,17 +3386,17 @@ function openNationalItemModal(req, families) {
         '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0; margin-bottom:14px;">' +
             '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Camp & District Logistics Dossier</div>' +
             '<div style="margin-top:6px; font-size:13px; color:#334155; line-height:1.6;">' +
-                '<div>📍 <strong>Camp Destination:</strong> ' + escapeHtml(req.camp_name) + ' (' + escapeHtml(req.district) + ' District)</div>' +
-                '<div>👥 <strong>Camp Occupancy:</strong> ' + parseInt(req.current_population) + ' people / Capacity: ' + parseInt(req.capacity) + '</div>' +
-                '<div>👮 <strong>Originating Officer:</strong> ' + escapeHtml(req.officer_name || 'Camp Officer') + '</div>' +
-                '<div>📅 <strong>Submitted:</strong> ' + escapeHtml(req.created_at || 'Recently') + '</div>' +
+                '<div><strong>Camp Destination:</strong> ' + escapeHtml(req.camp_name) + ' (' + escapeHtml(req.district) + ' District)</div>' +
+                '<div><strong>Camp Occupancy:</strong> ' + parseInt(req.current_population) + ' people / Capacity: ' + parseInt(req.capacity) + '</div>' +
+                '<div><strong>Originating Officer:</strong> ' + escapeHtml(req.officer_name || 'Camp Officer') + '</div>' +
+                '<div><strong>Submitted:</strong> ' + escapeHtml(req.created_at || 'Recently') + '</div>' +
             '</div>' +
         '</div>' +
 
         specialNeedsHtml;
 
     footer.innerHTML = 
-        '<button type="button" class="btn-action reject" style="margin-right:auto;" onclick="deleteSupplyItem(' + parseInt(req.id) + ', \'' + escapeHtml(req.item_type) + '\')">🗑️ Delete Supply Request</button>' +
+        '<button type="button" class="btn-action reject" style="margin-right:auto;" onclick="deleteSupplyItem(' + parseInt(req.id) + ', \'' + escapeHtml(req.item_type) + '\')">Delete Supply Request</button>' +
         '<button type="button" onclick="closeNationalModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">' +
             'Close' +
         '</button>';
@@ -3396,7 +3411,7 @@ function openNationalPersonModal(fam) {
     const footer = document.getElementById('nationalModalFooter');
     if (!modal || !title || !body) return;
 
-    title.innerHTML = '👥 Displaced Citizen Dossier: ' + escapeHtml(fam.family_head_name);
+    title.innerHTML = 'Displaced Citizen Dossier: ' + escapeHtml(fam.family_head_name);
 
     const special = (fam.special_needs_details || '').trim();
     const hasSpecial = special !== '' && special.toLowerCase() !== 'none';
@@ -3406,7 +3421,7 @@ function openNationalPersonModal(fam) {
         specialBox = 
             '<div style="margin-top:16px; background:#fff1f2; border:2px solid #f43f5e; border-radius:8px; padding:16px;">' +
                 '<div style="font-weight:700; color:#be123c; font-size:14px; margin-bottom:6px; display:flex; align-items:center; gap:6px;">' +
-                    '⚠️ Camp Officer Uploaded Special Requirement Details:' +
+                    'Camp Officer Uploaded Special Requirement Details:' +
                 '</div>' +
                 '<div style="background:#fff; border:1px solid #fecdd3; border-radius:6px; padding:12px 14px; font-size:14px; color:#881337; font-weight:600; line-height:1.5;">' +
                     escapeHtml(special) +
@@ -3418,7 +3433,7 @@ function openNationalPersonModal(fam) {
     } else {
         specialBox = 
             '<div style="margin-top:16px; background:#f0fdf4; border:1px solid #86efac; border-radius:8px; padding:14px; color:#15803d; font-size:13px;">' +
-                '✓ Standard displaced family intake without special medical or mobility flags.' +
+                'Standard displaced family intake without special medical or mobility flags.' +
             '</div>';
     }
 
@@ -3431,8 +3446,8 @@ function openNationalPersonModal(fam) {
             '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0;">' +
                 '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">People Quantities Breakdown</div>' +
                 '<div style="margin-top:4px; font-size:14px; font-weight:600; color:#0f172a; display:flex; gap:12px; align-items:center;">' +
-                    '<span>👥 Member Quantity: ' + parseInt(fam.members_count) + '</span>' +
-                    '<span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">🍼 Infants: ' + parseInt(fam.infants_count) + '</span>' +
+                    '<span>Member Quantity: ' + parseInt(fam.members_count) + '</span>' +
+                    '<span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;"> Infants: ' + parseInt(fam.infants_count) + '</span>' +
                 '</div>' +
             '</div>' +
         '</div>' +
@@ -3440,16 +3455,16 @@ function openNationalPersonModal(fam) {
         '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0; margin-bottom:14px;">' +
             '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Camp & District Record</div>' +
             '<div style="margin-top:6px; font-size:13px; color:#334155; line-height:1.6;">' +
-                '<div>📍 <strong>Camp:</strong> ' + escapeHtml(fam.camp_name) + ' (' + escapeHtml(fam.district) + ' District)</div>' +
-                '<div>👮 <strong>Registering Officer:</strong> ' + escapeHtml(fam.officer_name || 'Camp Officer') + '</div>' +
-                '<div>📅 <strong>Registration Date:</strong> ' + escapeHtml(fam.created_at || 'Recently') + '</div>' +
+                '<div><strong>Camp:</strong> ' + escapeHtml(fam.camp_name) + ' (' + escapeHtml(fam.district) + ' District)</div>' +
+                '<div><strong>Registering Officer:</strong> ' + escapeHtml(fam.officer_name || 'Camp Officer') + '</div>' +
+                '<div><strong>Registration Date:</strong> ' + escapeHtml(fam.created_at || 'Recently') + '</div>' +
             '</div>' +
         '</div>' +
 
         specialBox;
 
     footer.innerHTML = 
-        '<button type="button" class="btn-action reject" style="margin-right:auto;" onclick="deletePerson(' + parseInt(fam.id) + ', \'' + escapeHtml(fam.family_head_name) + '\')">🗑️ Delete Person / Family Record</button>' +
+        '<button type="button" class="btn-action reject" style="margin-right:auto;" onclick="deletePerson(' + parseInt(fam.id) + ', \'' + escapeHtml(fam.family_head_name) + '\')">Delete Person / Family Record</button>' +
         '<button type="button" onclick="closeNationalModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">' +
             'Close' +
         '</button>';
@@ -3537,7 +3552,7 @@ if (nationalMapElement) {
                     const popupDiv = document.createElement("div");
                     popupDiv.innerHTML = `
                         <div style="font-family:sans-serif; min-width:200px; padding:2px;">
-                            <strong style="font-size:14px; color:#1e293b; display:block; margin-bottom:4px;">📍 ${escapeHtml(camp.camp_name)}</strong>
+                            <strong style="font-size:14px; color:#1e293b; display:block; margin-bottom:4px;">${escapeHtml(camp.camp_name)}</strong>
                             <div style="color:#64748b; font-size:12px; line-height:1.5;">
                                 <strong>District:</strong> ${escapeHtml(camp.district)}<br>
                                 <strong>Occupants:</strong> ${camp.current_population} / ${camp.capacity}<br>
@@ -3545,10 +3560,10 @@ if (nationalMapElement) {
                             </div>
                             <div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">
                                 <button type="button" class="nat-popup-modify-btn" style="padding:6px 10px; width:100%; background:#0284c7; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600; font-size:12px;">
-                                    ✏️ Modify Camp Details
+                                    Modify Camp Details
                                 </button>
                                 <button type="button" class="nat-popup-delete-btn" style="padding:6px 10px; width:100%; background:#ef4444; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600; font-size:12px;">
-                                    🗑️ Delete Location
+                                    Delete Location
                                 </button>
                             </div>
                         </div>
@@ -3603,6 +3618,22 @@ function escapeHtml(value) {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
 
+}
+
+// Clean up any remaining URL query parameters immediately so they never reload on refresh
+if (window.history.replaceState && window.location.search) {
+    window.history.replaceState({}, document.title, window.location.pathname);
+}
+
+// Auto-dismiss alert banner after 5 seconds
+const flashBanner = document.getElementById('flashAlertBanner');
+if (flashBanner) {
+    setTimeout(function() {
+        flashBanner.style.opacity = '0';
+        setTimeout(function() {
+            if (flashBanner.parentNode) flashBanner.remove();
+        }, 400);
+    }, 5000);
 }
 
 </script>
