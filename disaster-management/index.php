@@ -16,6 +16,7 @@ $user_district = $_SESSION['district'] ?? '';
 | Get camps managed by this Camp Officer
 |--------------------------------------------------------------------------
 */
+
 $my_camps = [];
 
 if ($role === 'Camp Officer') {
@@ -50,6 +51,7 @@ if ($role === 'Camp Officer') {
 | District Admin - Get Pending Supply Requests
 |--------------------------------------------------------------------------
 */
+
 $district_requests = [];
 
 if ($role === 'District Admin') {
@@ -91,6 +93,7 @@ if ($role === 'District Admin') {
 | National Authority Statistics
 |--------------------------------------------------------------------------
 */
+
 $total_camps = 0;
 $total_population = 0;
 
