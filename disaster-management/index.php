@@ -54,20 +54,26 @@ if ($role === 'Camp Officer') {
 
 $district_requests = [];
 $district_families = [];
+$camp_families_map = [];
 
 if ($role === 'District Admin') {
 
-    // 1. Pending supply requests with camp special requirements
+    // 1. Supply requests with camp special requirements
     $stmt = $conn->prepare("
         SELECT
             r.id,
+            r.camp_id,
             r.item_type,
             r.quantity,
             r.status,
+            r.created_at,
             c.camp_name,
             c.district,
+            c.capacity,
+            c.current_population,
+            COALESCE(u.username, 'Officer') AS officer_name,
             (
-                SELECT GROUP_CONCAT(DISTINCT f.special_needs_details SEPARATOR ' • ')
+                SELECT GROUP_CONCAT(DISTINCT CONCAT(f.family_head_name, ' (', f.members_count, ' mem): ', f.special_needs_details) SEPARATOR ' \n• ')
                 FROM families AS f
                 WHERE f.camp_id = c.id
                   AND TRIM(f.special_needs_details) != ''
@@ -76,14 +82,15 @@ if ($role === 'District Admin') {
         FROM supply_requests AS r
         INNER JOIN camps AS c
             ON r.camp_id = c.id
-        WHERE r.status = 'Pending'
-        AND TRIM(LOWER(c.district)) = TRIM(LOWER(?))
+        LEFT JOIN users AS u
+            ON r.requested_by = u.id
+        WHERE (? = 'All' OR TRIM(LOWER(c.district)) = TRIM(LOWER(?)))
         ORDER BY r.id DESC
     ");
 
     if ($stmt) {
 
-        $stmt->bind_param("s", $user_district);
+        $stmt->bind_param("ss", $user_district, $user_district);
         $stmt->execute();
 
         $result = $stmt->get_result();
@@ -99,29 +106,40 @@ if ($role === 'District Admin') {
     $stmt_fam = $conn->prepare("
         SELECT
             f.id,
+            f.camp_id,
             f.family_head_name,
             f.members_count,
             f.infants_count,
             f.special_needs_details,
             f.created_at,
             c.camp_name,
-            c.district
+            c.district,
+            c.capacity,
+            c.current_population,
+            COALESCE(u.username, 'Camp Officer') AS officer_name
         FROM families AS f
         INNER JOIN camps AS c
             ON f.camp_id = c.id
-        WHERE TRIM(LOWER(c.district)) = TRIM(LOWER(?))
+        LEFT JOIN users AS u
+            ON c.managed_by = u.id
+        WHERE (? = 'All' OR TRIM(LOWER(c.district)) = TRIM(LOWER(?)))
         ORDER BY f.id DESC
     ");
 
     if ($stmt_fam) {
 
-        $stmt_fam->bind_param("s", $user_district);
+        $stmt_fam->bind_param("ss", $user_district, $user_district);
         $stmt_fam->execute();
 
         $result_fam = $stmt_fam->get_result();
 
         while ($row = $result_fam->fetch_assoc()) {
             $district_families[] = $row;
+            $cid = (int)$row['camp_id'];
+            if (!isset($camp_families_map[$cid])) {
+                $camp_families_map[$cid] = [];
+            }
+            $camp_families_map[$cid][] = $row;
         }
 
         $stmt_fam->close();
@@ -445,6 +463,13 @@ if ($role === 'National Authority') {
             border-radius: 4px;
             margin-right: 5px;
             font-size: 13px;
+            border: none;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .btn-action:hover {
+            opacity: 0.9;
         }
 
         .approve {
@@ -453,6 +478,67 @@ if ($role === 'National Authority') {
 
         .reject {
             background: #e74c3c;
+        }
+
+        .view-btn {
+            background: #4f46e5;
+            color: white;
+            font-weight: 600;
+        }
+
+        .view-btn:hover {
+            background: #4338ca;
+        }
+
+        /* View Toggle Tabs */
+        .view-toggle-btn {
+            background: #f1f5f9;
+            color: #475569;
+            border: 1px solid #cbd5e1;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .view-toggle-btn:hover {
+            background: #e2e8f0;
+            color: #1e293b;
+        }
+
+        .view-toggle-btn.active {
+            background: #1e40af;
+            color: #ffffff;
+            border-color: #1e40af;
+            box-shadow: 0 2px 4px rgba(30, 64, 175, 0.25);
+        }
+
+        /* Modal Overlay */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(15, 23, 42, 0.65);
+            backdrop-filter: blur(3px);
+            z-index: 99999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        @keyframes fadeInModal {
+            from { opacity: 0; transform: translateY(-10px) scale(0.98); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .modal-animated {
+            animation: fadeInModal 0.2s ease-out;
         }
 
 
@@ -929,10 +1015,6 @@ if ($role === 'National Authority') {
             </tbody>
         </table>
 
-    <?php else: ?>
-        <p style="padding:15px; color:#64748b;">
-            You have not registered any camps yet. Use the form above to add your first camp location.
-        </p>
     <?php endif; ?>
 
 </div>
@@ -942,205 +1024,323 @@ if ($role === 'National Authority') {
 
 
 <!-- ==========================================================
-     DISTRICT ADMIN
+     DISTRICT ADMIN DASHBOARD
 ========================================================== -->
 
-<div class="card">
+<!-- Top Summary & View Option Control Bar -->
+<div class="card" style="margin-bottom:20px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:15px; margin-bottom:15px;">
+        <div>
+            <h2 style="margin:0 0 5px 0; color:#1e293b;">District Logistics & Population Command</h2>
+            <p style="margin:0; color:#64748b; font-size:14px;">
+                Jurisdiction: <strong style="color:#0f172a;"><?php echo htmlspecialchars($user_district); ?> District</strong>
+            </p>
+        </div>
 
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <h2 style="margin:0;">Pending Supply Requests</h2>
-        <span style="background:#fef3c7; color:#92400e; padding:4px 10px; border-radius:12px; font-size:12px; font-weight:600;">
-            Pending: <?php echo count($district_requests); ?>
+        <!-- View Option Controls -->
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <span style="font-size:13px; font-weight:600; color:#475569; margin-right:4px;">👁️ View Option:</span>
+            <button type="button" class="view-toggle-btn active" id="btnViewAll" onclick="switchDistrictView('all')">
+                📋 View All
+            </button>
+            <button type="button" class="view-toggle-btn" id="btnViewItems" onclick="switchDistrictView('items')">
+                📦 View Option: Items (<?php echo count($district_requests); ?>)
+            </button>
+            <button type="button" class="view-toggle-btn" id="btnViewPeople" onclick="switchDistrictView('people')">
+                👥 View Option: People (<?php echo count($district_families); ?>)
+            </button>
+        </div>
+    </div>
+
+    <!-- Quick Stats Cards Row -->
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:15px; margin-bottom:15px;">
+        <?php
+            $pending_count = 0;
+            $approved_count = 0;
+            foreach ($district_requests as $r) {
+                if ($r['status'] === 'Pending') $pending_count++;
+                if ($r['status'] === 'Approved') $approved_count++;
+            }
+            $special_needs_count = 0;
+            $total_infants = 0;
+            $total_members = 0;
+            foreach ($district_families as $f) {
+                $total_members += (int)$f['members_count'];
+                $total_infants += (int)$f['infants_count'];
+                $sn = trim($f['special_needs_details'] ?? '');
+                if ($sn !== '' && strtolower($sn) !== 'none') {
+                    $special_needs_count++;
+                }
+            }
+        ?>
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #3b82f6; padding:12px 16px; border-radius:8px;">
+            <div style="font-size:12px; font-weight:600; color:#64748b; text-transform:uppercase;">Relief Supply Items</div>
+            <div style="font-size:24px; font-weight:700; color:#1e293b; margin:4px 0;"><?php echo count($district_requests); ?> <span style="font-size:13px; font-weight:500; color:#64748b;">requests</span></div>
+            <div style="font-size:12px; color:#475569;">
+                <span style="color:#d97706; font-weight:600;">⏳ <?php echo $pending_count; ?> Pending</span> &bull; 
+                <span style="color:#16a34a; font-weight:600;">✓ <?php echo $approved_count; ?> Approved</span>
+            </div>
+        </div>
+
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #10b981; padding:12px 16px; border-radius:8px;">
+            <div style="font-size:12px; font-weight:600; color:#64748b; text-transform:uppercase;">Camp Population (People)</div>
+            <div style="font-size:24px; font-weight:700; color:#1e293b; margin:4px 0;"><?php echo $total_members; ?> <span style="font-size:13px; font-weight:500; color:#64748b;">people</span></div>
+            <div style="font-size:12px; color:#475569;">
+                <span><?php echo count($district_families); ?> families</span> &bull; 
+                <span style="color:#0284c7; font-weight:600;">🍼 <?php echo $total_infants; ?> Infants</span>
+            </div>
+        </div>
+
+        <div style="background:#fef2f2; border:1px solid #fecaca; border-left:4px solid #ef4444; padding:12px 16px; border-radius:8px;">
+            <div style="font-size:12px; font-weight:600; color:#991b1b; text-transform:uppercase;">Uploaded Special Requirements</div>
+            <div style="font-size:24px; font-weight:700; color:#b91c1c; margin:4px 0;"><?php echo $special_needs_count; ?> <span style="font-size:13px; font-weight:500; color:#991b1b;">cases</span></div>
+            <div style="font-size:12px; color:#b91c1c; font-weight:500;">
+                ⚠️ Critical medical, dietary, & disability needs
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Search Filter -->
+    <div style="display:flex; gap:10px; align-items:center;">
+        <input 
+            type="text" 
+            id="districtSearchInput" 
+            placeholder="🔍 Live filter by Item name, Person / Family head, Camp, or Special requirement keyword..." 
+            oninput="filterDistrictRecords()" 
+            style="width:100%; padding:10px 14px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; background:#fff;"
+        >
+        <button type="button" onclick="clearDistrictSearch()" style="padding:10px 14px; background:#e2e8f0; color:#475569; border:none; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600; white-space:nowrap;">
+            ✕ Clear
+        </button>
+    </div>
+</div>
+
+<!-- ==========================================================
+     SECTION 1: ITEMS (SUPPLY REQUESTS)
+========================================================== -->
+<div class="card" id="districtItemsCard" style="margin-bottom:25px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+        <div>
+            <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
+                <span>📦 View Option: Supply Requests (Items)</span>
+            </h2>
+            <p style="margin:4px 0 0 0; color:#64748b; font-size:13px;">
+                Officer submitted logistics requirements paired with camp-level special requirement details.
+            </p>
+        </div>
+        <span style="background:#e0f2fe; color:#0369a1; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:600;">
+            <?php echo count($district_requests); ?> Total Items
         </span>
     </div>
 
-    <p style="margin-bottom:15px; color:#64748b;">
-        District: <strong><?php echo htmlspecialchars($user_district); ?></strong>
-    </p>
-
-
     <?php if (count($district_requests) > 0): ?>
-
-        <table class="data-table">
-
+        <table class="data-table" id="districtItemsTable">
             <thead>
-
                 <tr>
-                    <th>Camp Name</th>
-                    <th>District</th>
-                    <th>Requested Item</th>
-                    <th>Quantity</th>
-                    <th>Camp Special Requirements</th>
-                    <th>Status</th>
-                    <th>Action</th>
+                    <th style="width:20%;">Requested Item</th>
+                    <th style="width:10%;">Quantity</th>
+                    <th style="width:18%;">Camp Location</th>
+                    <th style="width:12%;">Officer</th>
+                    <th style="width:10%;">Status</th>
+                    <th style="width:20%;">Camp Special Requirements</th>
+                    <th style="width:10%; text-align:center;">View / Action</th>
                 </tr>
-
             </thead>
-
-
             <tbody>
-
                 <?php foreach ($district_requests as $req): ?>
-
-                    <tr>
-
+                    <tr class="district-item-row" data-search="<?php echo htmlspecialchars(strtolower($req['item_type'] . ' ' . $req['camp_name'] . ' ' . ($req['officer_name'] ?? '') . ' ' . $req['status'] . ' ' . ($req['camp_special_needs'] ?? ''))); ?>">
                         <td>
-                            <strong>
-                                <?php echo htmlspecialchars($req['camp_name']); ?>
-                            </strong>
+                            <strong style="color:#0f172a; font-size:14px;"><?php echo htmlspecialchars($req['item_type']); ?></strong>
                         </td>
-
                         <td>
-                            <?php echo htmlspecialchars($req['district']); ?>
+                            <span style="background:#f1f5f9; color:#0f172a; padding:3px 8px; border-radius:4px; font-weight:700; font-size:13px;">
+                                <?php echo (int)$req['quantity']; ?>
+                            </span>
                         </td>
-
                         <td>
-                            <strong><?php echo htmlspecialchars($req['item_type']); ?></strong>
+                            <strong><?php echo htmlspecialchars($req['camp_name']); ?></strong><br>
+                            <span style="color:#64748b; font-size:11px;">
+                                Occ: <?php echo (int)$req['current_population']; ?> / Cap: <?php echo (int)$req['capacity']; ?>
+                            </span>
                         </td>
-
                         <td>
-                            <?php echo (int)$req['quantity']; ?>
+                            <span style="color:#475569; font-size:13px;">
+                                👮 <?php echo htmlspecialchars($req['officer_name'] ?? 'Officer'); ?>
+                            </span>
                         </td>
-
+                        <td>
+                            <?php
+                                $st = $req['status'];
+                                $badge_style = 'background:#fef9c3; color:#854d0e;';
+                                if ($st === 'Approved') $badge_style = 'background:#dcfce7; color:#166534;';
+                                if ($st === 'Rejected') $badge_style = 'background:#fee2e2; color:#991b1b;';
+                            ?>
+                            <span style="<?php echo $badge_style; ?> padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">
+                                <?php echo htmlspecialchars($st); ?>
+                            </span>
+                        </td>
                         <td>
                             <?php if (!empty($req['camp_special_needs'])): ?>
-                                <span style="display:inline-block; background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; padding:4px 8px; border-radius:4px; font-size:12px; font-weight:600; line-height:1.4;">
-                                    ⚠️ <?php echo htmlspecialchars($req['camp_special_needs']); ?>
-                                </span>
+                                <div style="background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; padding:6px 10px; border-radius:6px; font-size:12px; font-weight:500; line-height:1.4; max-height:80px; overflow-y:auto;">
+                                    <strong>⚠️ Special Requirements:</strong><br>
+                                    <?php echo nl2br(htmlspecialchars($req['camp_special_needs'])); ?>
+                                </div>
                             <?php else: ?>
                                 <span style="color:#94a3b8; font-size:12px; font-style:italic;">None reported</span>
                             <?php endif; ?>
                         </td>
-
-                        <td>
-                            <span style="background:#fef9c3; color:#854d0e; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">
-                                <?php echo htmlspecialchars($req['status']); ?>
-                            </span>
-                        </td>
-
-                        <td style="white-space:nowrap;">
-
-                            <a
-                                href="actions.php?action=approve_req&id=<?php echo (int)$req['id']; ?>"
-                                class="btn-action approve"
-                                onclick="return confirm('Approve this supply request?');"
+                        <td style="white-space:nowrap; text-align:center;">
+                            <!-- View Option Button -->
+                            <button 
+                                type="button" 
+                                class="btn-action view-btn"
+                                onclick="openItemModal(<?php echo htmlspecialchars(json_encode($req)); ?>, <?php echo htmlspecialchars(json_encode($camp_families_map[(int)$req['camp_id']] ?? [])); ?>)"
+                                title="View complete details of this requested item and associated camp special needs"
                             >
-                                Approve
-                            </a>
+                                👁️ View
+                            </button>
 
-                            <a
-                                href="actions.php?action=reject_req&id=<?php echo (int)$req['id']; ?>"
-                                class="btn-action reject"
-                                onclick="return confirm('Reject this supply request?');"
-                            >
-                                Reject
-                            </a>
-
+                            <?php if ($req['status'] === 'Pending'): ?>
+                                <a
+                                    href="actions.php?action=approve_req&id=<?php echo (int)$req['id']; ?>"
+                                    class="btn-action approve"
+                                    onclick="return confirm('Approve this supply request?');"
+                                    title="Approve supply dispatch"
+                                >
+                                    ✓
+                                </a>
+                                <a
+                                    href="actions.php?action=reject_req&id=<?php echo (int)$req['id']; ?>"
+                                    class="btn-action reject"
+                                    onclick="return confirm('Reject this supply request?');"
+                                    title="Reject request"
+                                >
+                                    ✕
+                                </a>
+                            <?php endif; ?>
                         </td>
-
                     </tr>
-
                 <?php endforeach; ?>
-
             </tbody>
-
         </table>
-
-
     <?php else: ?>
-
-        <p style="padding:15px; color:#64748b;">
-            No pending supply requests found for
-            <strong><?php echo htmlspecialchars($user_district); ?></strong>.
-        </p>
-
+        <p style="padding:15px; color:#64748b;">No supply requests found for <strong><?php echo htmlspecialchars($user_district); ?></strong>.</p>
     <?php endif; ?>
-
 </div>
 
-
 <!-- ==========================================================
-     DISTRICT REGISTERED FAMILIES & SPECIAL REQUIREMENTS
+     SECTION 2: PEOPLE (FAMILIES & SPECIAL REQUIREMENTS)
 ========================================================== -->
-
-<div class="card" style="margin-top:25px; width:100%;">
-
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <h2 style="margin:0;">Camp Families & Special Requirements</h2>
-        <span style="background:#e0f2fe; color:#0369a1; padding:4px 10px; border-radius:12px; font-size:12px; font-weight:600;">
-            Total Registered: <?php echo count($district_families); ?> Families
+<div class="card" id="districtPeopleCard" style="margin-bottom:25px; width:100%;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+        <div>
+            <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
+                <span>👥 View Option: Camp People & Special Requirements</span>
+            </h2>
+            <p style="margin:4px 0 0 0; color:#64748b; font-size:13px;">
+                Officer uploaded family intakes with full visibility into critical medical, infant, dietary, and accessibility details.
+            </p>
+        </div>
+        <span style="background:#e0f2fe; color:#0369a1; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:600;">
+            <?php echo count($district_families); ?> Total Families
         </span>
     </div>
 
-    <p style="margin-bottom:15px; color:#64748b;">
-        Family intake details and special medical/dietary/accessibility requirements entered by Camp Officers across camps in <strong><?php echo htmlspecialchars($user_district); ?></strong>.
-    </p>
-
     <?php if (count($district_families) > 0): ?>
-
-        <table class="data-table">
-
+        <table class="data-table" id="districtPeopleTable">
             <thead>
                 <tr>
-                    <th>Camp Location</th>
-                    <th>Family Head</th>
-                    <th>Total Members</th>
-                    <th>Infants</th>
-                    <th>Special Requirement Details</th>
-                    <th>Date Recorded</th>
+                    <th style="width:18%;">Person / Family Head</th>
+                    <th style="width:16%;">Camp Location</th>
+                    <th style="width:12%;">Officer</th>
+                    <th style="width:10%;">Members</th>
+                    <th style="width:8%;">Infants</th>
+                    <th style="width:26%;">Uploaded Special Requirement Details</th>
+                    <th style="width:10%; text-align:center;">View Option</th>
                 </tr>
             </thead>
-
             <tbody>
                 <?php foreach ($district_families as $fam): ?>
-                    <tr>
+                    <?php 
+                        $special = trim($fam['special_needs_details'] ?? '');
+                        $has_special = ($special !== '' && strtolower($special) !== 'none');
+                    ?>
+                    <tr class="district-people-row" data-search="<?php echo htmlspecialchars(strtolower($fam['family_head_name'] . ' ' . $fam['camp_name'] . ' ' . ($fam['officer_name'] ?? '') . ' ' . $special)); ?>">
                         <td>
-                            <strong><?php echo htmlspecialchars($fam['camp_name']); ?></strong>
+                            <strong style="color:#0f172a; font-size:14px;"><?php echo htmlspecialchars($fam['family_head_name']); ?></strong>
+                            <div style="color:#64748b; font-size:11px;"><?php echo htmlspecialchars(date('M d, Y H:i', strtotime($fam['created_at']))); ?></div>
                         </td>
                         <td>
-                            <?php echo htmlspecialchars($fam['family_head_name']); ?>
+                            <strong><?php echo htmlspecialchars($fam['camp_name']); ?></strong><br>
+                            <span style="color:#64748b; font-size:11px;"><?php echo htmlspecialchars($fam['district']); ?></span>
                         </td>
                         <td>
-                            <?php echo (int)$fam['members_count']; ?>
+                            <span style="color:#475569; font-size:13px;">
+                                👮 <?php echo htmlspecialchars($fam['officer_name'] ?? 'Officer'); ?>
+                            </span>
+                        </td>
+                        <td>
+                            <span style="background:#f1f5f9; color:#0f172a; padding:2px 8px; border-radius:4px; font-weight:600; font-size:13px;">
+                                👥 <?php echo (int)$fam['members_count']; ?>
+                            </span>
                         </td>
                         <td>
                             <?php if ((int)$fam['infants_count'] > 0): ?>
-                                <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-weight:600; font-size:12px;">
+                                <span style="background:#fef3c7; color:#92400e; padding:3px 8px; border-radius:4px; font-weight:700; font-size:12px;">
                                     🍼 <?php echo (int)$fam['infants_count']; ?>
                                 </span>
                             <?php else: ?>
-                                0
+                                <span style="color:#94a3b8; font-size:12px;">0</span>
                             <?php endif; ?>
                         </td>
                         <td>
-                            <?php
-                            $special = trim($fam['special_needs_details'] ?? '');
-                            if ($special !== '' && strtolower($special) !== 'none'):
-                            ?>
-                                <span style="display:inline-block; background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; padding:4px 10px; border-radius:4px; font-size:12px; font-weight:600; line-height:1.4;">
+                            <?php if ($has_special): ?>
+                                <div style="background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; padding:6px 10px; border-radius:6px; font-size:13px; font-weight:600; line-height:1.4;">
                                     ⚠️ <?php echo htmlspecialchars($special); ?>
-                                </span>
+                                </div>
                             <?php else: ?>
                                 <span style="color:#94a3b8; font-style:italic; font-size:12px;">None reported</span>
                             <?php endif; ?>
                         </td>
-                        <td style="color:#64748b; font-size:12px; white-space:nowrap;">
-                            <?php echo htmlspecialchars(date('M d, Y H:i', strtotime($fam['created_at']))); ?>
+                        <td style="white-space:nowrap; text-align:center;">
+                            <!-- View Option Button -->
+                            <button 
+                                type="button" 
+                                class="btn-action view-btn"
+                                onclick="openPersonModal(<?php echo htmlspecialchars(json_encode($fam)); ?>)"
+                                title="View complete dossier for this person / family"
+                            >
+                                👁️ View Profile
+                            </button>
                         </td>
                     </tr>
                 <?php endforeach; ?>
             </tbody>
-
         </table>
-
     <?php else: ?>
-
-        <p style="padding:15px; color:#64748b;">
-            No family intakes recorded for <strong><?php echo htmlspecialchars($user_district); ?></strong> yet.
-        </p>
-
+        <p style="padding:15px; color:#64748b;">No family intakes recorded for <strong><?php echo htmlspecialchars($user_district); ?></strong> yet.</p>
     <?php endif; ?>
+</div>
 
+<!-- ==========================================================
+     DISTRICT MODAL (VIEW OPTION FOR ITEM & PEOPLE)
+========================================================== -->
+<div id="districtDetailModal" class="modal-overlay" style="display:none;" onclick="handleModalBackdropClick(event)">
+    <div class="modal-content modal-animated" style="max-width:680px; width:90%; background:#fff; border-radius:12px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.2), 0 10px 10px -5px rgba(0,0,0,0.1); padding:0; overflow:hidden;">
+        <!-- Modal Header -->
+        <div id="districtModalHeader" style="padding:16px 22px; background:#1e40af; color:#fff; display:flex; justify-content:space-between; align-items:center;">
+            <h3 id="districtModalTitle" style="margin:0; font-size:17px; font-weight:700; color:#fff;">View Details</h3>
+            <button type="button" onclick="closeDistrictModal()" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; line-height:1; width:30px; height:30px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">✕</button>
+        </div>
+        <!-- Modal Body -->
+        <div id="districtModalBody" style="padding:22px; max-height:75vh; overflow-y:auto;">
+            <!-- Injected via JavaScript -->
+        </div>
+        <!-- Modal Footer -->
+        <div id="districtModalFooter" style="padding:14px 22px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; gap:10px; align-items:center;">
+            <button type="button" onclick="closeDistrictModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Close</button>
+        </div>
+    </div>
 </div>
 
 
@@ -1655,6 +1855,250 @@ if (campMapElement) {
         });
 
 }
+
+
+/* ==========================================================
+   DISTRICT ADMIN CONTROLS & MODALS
+========================================================== */
+
+<?php elseif ($role === 'District Admin'): ?>
+
+let currentDistrictView = 'all';
+
+function switchDistrictView(view) {
+    currentDistrictView = view;
+    const itemsCard = document.getElementById('districtItemsCard');
+    const peopleCard = document.getElementById('districtPeopleCard');
+    const btnAll = document.getElementById('btnViewAll');
+    const btnItems = document.getElementById('btnViewItems');
+    const btnPeople = document.getElementById('btnViewPeople');
+
+    if (btnAll) btnAll.classList.toggle('active', view === 'all');
+    if (btnItems) btnItems.classList.toggle('active', view === 'items');
+    if (btnPeople) btnPeople.classList.toggle('active', view === 'people');
+
+    if (itemsCard) {
+        itemsCard.style.display = (view === 'all' || view === 'items') ? 'block' : 'none';
+    }
+    if (peopleCard) {
+        peopleCard.style.display = (view === 'all' || view === 'people') ? 'block' : 'none';
+    }
+}
+
+function filterDistrictRecords() {
+    const searchInput = document.getElementById('districtSearchInput');
+    const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
+    const itemRows = document.querySelectorAll('.district-item-row');
+    const peopleRows = document.querySelectorAll('.district-people-row');
+
+    itemRows.forEach(function(row) {
+        const text = (row.getAttribute('data-search') || '').toLowerCase();
+        row.style.display = (!query || text.indexOf(query) !== -1) ? '' : 'none';
+    });
+
+    peopleRows.forEach(function(row) {
+        const text = (row.getAttribute('data-search') || '').toLowerCase();
+        row.style.display = (!query || text.indexOf(query) !== -1) ? '' : 'none';
+    });
+}
+
+function clearDistrictSearch() {
+    const input = document.getElementById('districtSearchInput');
+    if (input) {
+        input.value = '';
+        filterDistrictRecords();
+        input.focus();
+    }
+}
+
+function openItemModal(req, families) {
+    const modal = document.getElementById('districtDetailModal');
+    const title = document.getElementById('districtModalTitle');
+    const body = document.getElementById('districtModalBody');
+    const footer = document.getElementById('districtModalFooter');
+    if (!modal || !title || !body) return;
+
+    title.innerHTML = '📦 Relief Supply Item: ' + escapeHtml(req.item_type);
+
+    let statusBadge = '<span style="background:#fef9c3; color:#854d0e; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">' + escapeHtml(req.status) + '</span>';
+    if (req.status === 'Approved') {
+        statusBadge = '<span style="background:#dcfce7; color:#166534; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">✓ Approved</span>';
+    } else if (req.status === 'Rejected') {
+        statusBadge = '<span style="background:#fee2e2; color:#991b1b; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">✕ Rejected</span>';
+    }
+
+    // Filter families with special needs in this camp
+    const famsWithSpecial = (families || []).filter(function(f) {
+        const sn = (f.special_needs_details || '').trim();
+        return sn !== '' && sn.toLowerCase() !== 'none';
+    });
+
+    let specialNeedsHtml = '';
+    if (famsWithSpecial.length > 0) {
+        let listItems = famsWithSpecial.map(function(f) {
+            return '<div style="background:#fff; border:1px solid #fecaca; border-radius:6px; padding:10px 14px; margin-bottom:8px;">' +
+                '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
+                    '<strong style="color:#0f172a; font-size:13px;">👤 ' + escapeHtml(f.family_head_name) + '</strong>' +
+                    '<span style="font-size:11px; color:#64748b;">' +
+                        parseInt(f.members_count) + ' members ' + (parseInt(f.infants_count) > 0 ? '&bull; 🍼 ' + parseInt(f.infants_count) + ' infants' : '') +
+                    '</span>' +
+                '</div>' +
+                '<div style="color:#b91c1c; font-size:13px; font-weight:600;">' +
+                    '⚠️ ' + escapeHtml(f.special_needs_details) +
+                '</div>' +
+            '</div>';
+        }).join('');
+
+        specialNeedsHtml = '<div style="margin-top:18px; background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; padding:14px;">' +
+            '<div style="font-weight:700; color:#991b1b; font-size:13px; margin-bottom:10px; display:flex; align-items:center; gap:6px;">' +
+                '⚠️ Camp Officer Uploaded Special Requirements (' + famsWithSpecial.length + ' Cases in this Camp):' +
+            '</div>' +
+            listItems +
+        '</div>';
+    } else if (req.camp_special_needs && req.camp_special_needs.trim() !== '') {
+        specialNeedsHtml = '<div style="margin-top:18px; background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; padding:14px;">' +
+            '<div style="font-weight:700; color:#991b1b; font-size:13px; margin-bottom:6px;">' +
+                '⚠️ Camp Special Requirements:' +
+            '</div>' +
+            '<div style="color:#b91c1c; font-size:13px; font-weight:600;">' +
+                escapeHtml(req.camp_special_needs) +
+            '</div>' +
+        '</div>';
+    } else {
+        specialNeedsHtml = '<div style="margin-top:18px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px; color:#64748b; font-size:13px;">' +
+            '✓ No special medical, mobility, or infant requirements currently reported for this camp location.' +
+        '</div>';
+    }
+
+    body.innerHTML = 
+        '<div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px;">' +
+            '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0;">' +
+                '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Requested Item</div>' +
+                '<div style="font-size:16px; font-weight:700; color:#0f172a; margin-top:2px;">' + escapeHtml(req.item_type) + '</div>' +
+            '</div>' +
+            '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0;">' +
+                '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Quantity & Status</div>' +
+                '<div style="display:flex; align-items:center; gap:8px; margin-top:4px;">' +
+                    '<span style="font-size:18px; font-weight:700; color:#0f172a;">' + parseInt(req.quantity) + ' units</span>' +
+                    statusBadge +
+                '</div>' +
+            '</div>' +
+        '</div>' +
+
+        '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0; margin-bottom:14px;">' +
+            '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Camp & Logistics Context</div>' +
+            '<div style="margin-top:6px; font-size:13px; color:#334155; line-height:1.6;">' +
+                '<div>📍 <strong>Camp Name:</strong> ' + escapeHtml(req.camp_name) + ' (' + escapeHtml(req.district) + ')</div>' +
+                '<div>👥 <strong>Occupancy:</strong> ' + parseInt(req.current_population) + ' people / Capacity: ' + parseInt(req.capacity) + '</div>' +
+                '<div>👮 <strong>Requested By Officer:</strong> ' + escapeHtml(req.officer_name || 'Camp Officer') + '</div>' +
+                '<div>📅 <strong>Submitted:</strong> ' + escapeHtml(req.created_at || 'Recently') + '</div>' +
+            '</div>' +
+        '</div>' +
+
+        specialNeedsHtml;
+
+    let actionButtons = '';
+    if (req.status === 'Pending') {
+        actionButtons = 
+            '<a href="actions.php?action=approve_req&id=' + parseInt(req.id) + '" class="btn-action approve" onclick="return confirm(\'Approve this supply request?\')">' +
+                '✓ Approve Request' +
+            '</a>' +
+            '<a href="actions.php?action=reject_req&id=' + parseInt(req.id) + '" class="btn-action reject" onclick="return confirm(\'Reject this supply request?\')">' +
+                '✕ Reject Request' +
+            '</a>';
+    }
+    footer.innerHTML = 
+        actionButtons +
+        '<button type="button" onclick="closeDistrictModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">' +
+            'Close' +
+        '</button>';
+
+    modal.style.display = 'flex';
+}
+
+function openPersonModal(fam) {
+    const modal = document.getElementById('districtDetailModal');
+    const title = document.getElementById('districtModalTitle');
+    const body = document.getElementById('districtModalBody');
+    const footer = document.getElementById('districtModalFooter');
+    if (!modal || !title || !body) return;
+
+    title.innerHTML = '👥 Person / Family Dossier: ' + escapeHtml(fam.family_head_name);
+
+    const special = (fam.special_needs_details || '').trim();
+    const hasSpecial = special !== '' && special.toLowerCase() !== 'none';
+
+    let specialBox = '';
+    if (hasSpecial) {
+        specialBox = 
+            '<div style="margin-top:16px; background:#fff1f2; border:2px solid #f43f5e; border-radius:8px; padding:16px;">' +
+                '<div style="font-weight:700; color:#be123c; font-size:14px; margin-bottom:6px; display:flex; align-items:center; gap:6px;">' +
+                    '⚠️ Camp Officer Uploaded Special Requirement Details:' +
+                '</div>' +
+                '<div style="background:#fff; border:1px solid #fecdd3; border-radius:6px; padding:12px 14px; font-size:14px; color:#881337; font-weight:600; line-height:1.5;">' +
+                    escapeHtml(special) +
+                '</div>' +
+                '<p style="margin:8px 0 0 0; font-size:12px; color:#9f1239;">' +
+                    'High Priority: Verify emergency relief, dietary rations, or mobility assistance has been coordinated with the camp officer.' +
+                '</p>' +
+            '</div>';
+    } else {
+        specialBox = 
+            '<div style="margin-top:16px; background:#f0fdf4; border:1px solid #86efac; border-radius:8px; padding:14px; color:#15803d; font-size:13px;">' +
+                '✓ No special medical, mobility, or dietary needs reported for this family.' +
+            '</div>';
+    }
+
+    body.innerHTML = 
+        '<div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px;">' +
+            '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0;">' +
+                '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Family Head / Primary Contact</div>' +
+                '<div style="font-size:16px; font-weight:700; color:#0f172a; margin-top:2px;">' + escapeHtml(fam.family_head_name) + '</div>' +
+            '</div>' +
+            '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0;">' +
+                '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Family Members Composition</div>' +
+                '<div style="margin-top:4px; font-size:14px; font-weight:600; color:#0f172a; display:flex; gap:12px; align-items:center;">' +
+                    '<span>👥 Total: ' + parseInt(fam.members_count) + '</span>' +
+                    '<span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">🍼 Infants: ' + parseInt(fam.infants_count) + '</span>' +
+                '</div>' +
+            '</div>' +
+        '</div>' +
+
+        '<div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0; margin-bottom:14px;">' +
+            '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Camp & Officer Reference</div>' +
+            '<div style="margin-top:6px; font-size:13px; color:#334155; line-height:1.6;">' +
+                '<div>📍 <strong>Camp:</strong> ' + escapeHtml(fam.camp_name) + ' (' + escapeHtml(fam.district) + ')</div>' +
+                '<div>👮 <strong>Intake Officer:</strong> ' + escapeHtml(fam.officer_name || 'Camp Officer') + '</div>' +
+                '<div>📅 <strong>Registration Date:</strong> ' + escapeHtml(fam.created_at || 'Recently') + '</div>' +
+            '</div>' +
+        '</div>' +
+
+        specialBox;
+
+    footer.innerHTML = 
+        '<button type="button" onclick="closeDistrictModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">' +
+            'Close' +
+        '</button>';
+
+    modal.style.display = 'flex';
+}
+
+function closeDistrictModal() {
+    const modal = document.getElementById('districtDetailModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function handleModalBackdropClick(event) {
+    if (event.target && event.target.id === 'districtDetailModal') {
+        closeDistrictModal();
+    }
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeDistrictModal();
+    }
+});
 
 
 /* ==========================================================

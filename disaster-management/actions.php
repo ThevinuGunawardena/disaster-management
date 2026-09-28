@@ -1430,10 +1430,9 @@ if ($action === 'approve_req') {
         SET r.status = 'Approved'
         WHERE r.id = ?
         AND r.status = 'Pending'
-        AND TRIM(
-            LOWER(c.district)
-        ) = TRIM(
-            LOWER(?)
+        AND (
+            ? = 'All'
+            OR TRIM(LOWER(c.district)) = TRIM(LOWER(?))
         )
     ");
 
@@ -1449,8 +1448,9 @@ if ($action === 'approve_req') {
 
 
     $stmt->bind_param(
-        "is",
+        "iss",
         $request_id,
+        $user_district,
         $user_district
     );
 
@@ -1507,10 +1507,9 @@ if ($action === 'reject_req') {
         SET r.status = 'Rejected'
         WHERE r.id = ?
         AND r.status = 'Pending'
-        AND TRIM(
-            LOWER(c.district)
-        ) = TRIM(
-            LOWER(?)
+        AND (
+            ? = 'All'
+            OR TRIM(LOWER(c.district)) = TRIM(LOWER(?))
         )
     ");
 
@@ -1526,8 +1525,9 @@ if ($action === 'reject_req') {
 
 
     $stmt->bind_param(
-        "is",
+        "iss",
         $request_id,
+        $user_district,
         $user_district
     );
 
