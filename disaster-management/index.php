@@ -24,15 +24,15 @@ if ($role === 'Camp Officer') {
     $user_id = (int)$_SESSION['user_id'];
 
     $stmt = $conn->prepare("
-        SELECT id, camp_name, capacity, current_population
+        SELECT id, camp_name, capacity, current_population, latitude, longitude, district
         FROM camps
-        WHERE managed_by = ?
+        WHERE managed_by = ? OR district = ?
         ORDER BY camp_name
     ");
 
     if ($stmt) {
 
-        $stmt->bind_param("i", $user_id);
+        $stmt->bind_param("is", $user_id, $user_district);
         $stmt->execute();
 
         $result = $stmt->get_result();
@@ -551,6 +551,12 @@ if ($role === 'National Authority') {
 
 <div class="container">
 
+<?php if (isset($_GET['saved'])): ?>
+    <div style="background:#dcfce7; border:1px solid #86efac; color:#15803d; padding:12px 18px; border-radius:8px; margin-bottom:20px; font-weight:600; display:flex; justify-content:space-between; align-items:center;">
+        <span>✓ Camp details, intake, and requests processed successfully.</span>
+        <button type="button" onclick="this.parentElement.remove()" style="background:none; border:none; color:#15803d; font-size:16px; cursor:pointer;">✕</button>
+    </div>
+<?php endif; ?>
 
 <?php if ($role === 'Camp Officer'): ?>
 
@@ -571,14 +577,40 @@ if ($role === 'National Authority') {
 
         <div class="card">
 
-            <h2>1. Register Camp Location</h2>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <h2 style="margin:0;">1. Camp Location</h2>
+                <span id="campModeBadge" style="background:#e0f2fe; color:#0369a1; padding:4px 10px; border-radius:12px; font-size:12px; font-weight:600;">
+                    New Camp Mode
+                </span>
+            </div>
 
-            <p class="instruction">
-                Click on the map to select the camp location.
+            <p class="instruction" style="margin-bottom:12px;">
+                Select an existing camp below or click a map marker to re-update it. Click an empty spot to create a new camp.
             </p>
+
+            <div style="margin-bottom:12px;">
+                <select id="campSelect" style="width:100%; padding:9px 12px; border-radius:6px; border:1px solid #cbd5e1; font-size:14px; background:#fff;">
+                    <option value="">-- Choose Existing Camp to Re-update --</option>
+                    <?php foreach ($my_camps as $c): ?>
+                        <option 
+                            value="<?php echo (int)$c['id']; ?>"
+                            data-name="<?php echo htmlspecialchars($c['camp_name']); ?>"
+                            data-capacity="<?php echo (int)$c['capacity']; ?>"
+                            data-lat="<?php echo htmlspecialchars($c['latitude']); ?>"
+                            data-lng="<?php echo htmlspecialchars($c['longitude']); ?>"
+                            data-pop="<?php echo (int)$c['current_population']; ?>"
+                        >
+                            📍 <?php echo htmlspecialchars($c['camp_name']); ?> (Cap: <?php echo (int)$c['capacity']; ?>, Pop: <?php echo (int)$c['current_population']; ?>)
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <input type="hidden" name="camp_id" id="camp_id" value="">
 
             <input
                 type="text"
+                id="camp_name"
                 name="camp_name"
                 placeholder="Camp Name"
                 required
@@ -586,6 +618,7 @@ if ($role === 'National Authority') {
 
             <input
                 type="number"
+                id="capacity"
                 name="capacity"
                 placeholder="Resource Capacity"
                 min="1"
@@ -612,6 +645,15 @@ if ($role === 'National Authority') {
                     required
                 >
 
+            </div>
+
+            <div id="campActionButtons" style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;">
+                <button type="button" id="resetCampBtn" onclick="resetToNewCamp()" style="display:none; background:#64748b; color:white; border:none; padding:8px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:600;">
+                    ↺ Switch to New Camp Mode
+                </button>
+                <button type="button" id="updateCampOnlyBtn" onclick="submitCampUpdateOnly()" style="display:none; background:#0284c7; color:white; border:none; padding:8px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:600;">
+                    💾 Re-update Camp Details Only
+                </button>
             </div>
 
         </div>
@@ -1064,10 +1106,109 @@ function removeItem(button) {
 const campMapElement =
     document.getElementById("campMap");
 
+let allLoadedCamps = [];
+let currentMarker = null;
+let campMap = null;
+
+function selectCampForUpdate(camp) {
+    const idEl = document.getElementById("camp_id");
+    const nameEl = document.getElementById("camp_name");
+    const capEl = document.getElementById("capacity");
+    const latEl = document.getElementById("lat");
+    const lngEl = document.getElementById("lng");
+
+    if (idEl) idEl.value = camp.id;
+    if (nameEl) nameEl.value = camp.camp_name;
+    if (capEl) capEl.value = camp.capacity;
+    if (latEl) latEl.value = parseFloat(camp.latitude).toFixed(6);
+    if (lngEl) lngEl.value = parseFloat(camp.longitude).toFixed(6);
+
+    const campSelect = document.getElementById("campSelect");
+    if (campSelect) {
+        campSelect.value = camp.id;
+    }
+
+    const badge = document.getElementById("campModeBadge");
+    if (badge) {
+        badge.innerText = "Re-updating Existing Camp #" + camp.id;
+        badge.style.background = "#fef3c7";
+        badge.style.color = "#92400e";
+    }
+
+    const resetBtn = document.getElementById("resetCampBtn");
+    if (resetBtn) resetBtn.style.display = "inline-block";
+
+    const updateOnlyBtn = document.getElementById("updateCampOnlyBtn");
+    if (updateOnlyBtn) updateOnlyBtn.style.display = "inline-block";
+
+    if (campMap) {
+        if (currentMarker) {
+            campMap.removeLayer(currentMarker);
+        }
+        currentMarker = L.marker([parseFloat(camp.latitude), parseFloat(camp.longitude)]).addTo(campMap);
+        campMap.panTo([parseFloat(camp.latitude), parseFloat(camp.longitude)]);
+    }
+}
+
+function resetToNewCamp() {
+    const idEl = document.getElementById("camp_id");
+    const nameEl = document.getElementById("camp_name");
+    const capEl = document.getElementById("capacity");
+    const latEl = document.getElementById("lat");
+    const lngEl = document.getElementById("lng");
+
+    if (idEl) idEl.value = "";
+    if (nameEl) nameEl.value = "";
+    if (capEl) capEl.value = "";
+    if (latEl) latEl.value = "";
+    if (lngEl) lngEl.value = "";
+
+    const campSelect = document.getElementById("campSelect");
+    if (campSelect) {
+        campSelect.value = "";
+    }
+
+    const badge = document.getElementById("campModeBadge");
+    if (badge) {
+        badge.innerText = "New Camp Mode";
+        badge.style.background = "#e0f2fe";
+        badge.style.color = "#0369a1";
+    }
+
+    const resetBtn = document.getElementById("resetCampBtn");
+    if (resetBtn) resetBtn.style.display = "none";
+
+    const updateOnlyBtn = document.getElementById("updateCampOnlyBtn");
+    if (updateOnlyBtn) updateOnlyBtn.style.display = "none";
+
+    if (currentMarker && campMap) {
+        campMap.removeLayer(currentMarker);
+        currentMarker = null;
+    }
+}
+
+function submitCampUpdateOnly() {
+    const form = document.getElementById("saveAllForm");
+    form.action = "actions.php?action=update_camp";
+
+    const famHead = form.querySelector("[name='family_head']");
+    const famMem = form.querySelector("[name='members']");
+    const famInf = form.querySelector("[name='infants']");
+    if (famHead) famHead.required = false;
+    if (famMem) famMem.required = false;
+    if (famInf) famInf.required = false;
+
+    const items = form.querySelectorAll("[name='item_type[]']");
+    const qtys = form.querySelectorAll("[name='quantity[]']");
+    items.forEach(el => el.required = false);
+    qtys.forEach(el => el.required = false);
+
+    form.submit();
+}
 
 if (campMapElement) {
 
-    const campMap =
+    campMap =
         L.map("campMap").setView(
             [7.8731, 80.7718],
             7
@@ -1083,30 +1224,69 @@ if (campMapElement) {
     ).addTo(campMap);
 
 
-    let currentMarker = null;
+    const campSelect = document.getElementById("campSelect");
+    if (campSelect) {
+        campSelect.addEventListener("change", function() {
+            const selectedId = this.value;
+            if (!selectedId) {
+                resetToNewCamp();
+                return;
+            }
+            const found = allLoadedCamps.find(c => c.id == selectedId);
+            if (found) {
+                selectCampForUpdate(found);
+            }
+        });
+    }
 
 
     campMap.on("click", function(e) {
 
-        document.getElementById("lat").value =
-            e.latlng.lat.toFixed(6);
+        const clickedLat = e.latlng.lat;
+        const clickedLng = e.latlng.lng;
 
-        document.getElementById("lng").value =
-            e.latlng.lng.toFixed(6);
+        // Check if user clicked near an existing camp marker
+        const matchedCamp = allLoadedCamps.find(c => {
+            return Math.abs(parseFloat(c.latitude) - clickedLat) < 0.0005 &&
+                   Math.abs(parseFloat(c.longitude) - clickedLng) < 0.0005;
+        });
 
+        if (matchedCamp) {
+            selectCampForUpdate(matchedCamp);
+        } else {
+            document.getElementById("lat").value =
+                clickedLat.toFixed(6);
 
-        if (currentMarker) {
+            document.getElementById("lng").value =
+                clickedLng.toFixed(6);
 
-            campMap.removeLayer(currentMarker);
+            document.getElementById("camp_id").value = "";
 
+            if (campSelect) campSelect.value = "";
+
+            const badge = document.getElementById("campModeBadge");
+            if (badge) {
+                badge.innerText = "New Camp Mode";
+                badge.style.background = "#e0f2fe";
+                badge.style.color = "#0369a1";
+            }
+
+            const resetBtn = document.getElementById("resetCampBtn");
+            if (resetBtn) resetBtn.style.display = "none";
+
+            const updateOnlyBtn = document.getElementById("updateCampOnlyBtn");
+            if (updateOnlyBtn) updateOnlyBtn.style.display = "none";
+
+            if (currentMarker) {
+                campMap.removeLayer(currentMarker);
+            }
+
+            currentMarker =
+                L.marker([
+                    clickedLat,
+                    clickedLng
+                ]).addTo(campMap);
         }
-
-
-        currentMarker =
-            L.marker([
-                e.latlng.lat,
-                e.latlng.lng
-            ]).addTo(campMap);
 
     });
 
@@ -1136,6 +1316,8 @@ if (campMapElement) {
 
         .then(data => {
 
+            allLoadedCamps = data;
+
             data.forEach(camp => {
 
                 const lat =
@@ -1150,39 +1332,52 @@ if (campMapElement) {
                     !isNaN(lng)
                 ) {
 
-                    L.marker([
+                    const marker = L.marker([
                         lat,
                         lng
                     ])
+                    .addTo(campMap);
 
-                    .addTo(campMap)
+                    const popupDiv = document.createElement("div");
+                    popupDiv.innerHTML = `
+                        <div style="font-family:sans-serif; min-width:180px; padding:2px;">
+                            <strong style="font-size:14px; color:#1e293b; display:block; margin-bottom:4px;">${escapeHtml(camp.camp_name)}</strong>
+                            <div style="color:#64748b; font-size:12px; line-height:1.5;">
+                                <strong>District:</strong> ${escapeHtml(camp.district)}<br>
+                                <strong>Occupants:</strong> ${camp.current_population} / ${camp.capacity}<br>
+                                <strong>Coords:</strong> ${lat.toFixed(5)}, ${lng.toFixed(5)}
+                            </div>
+                            <button type="button" class="popup-reupdate-btn" style="margin-top:8px; padding:6px 10px; width:100%; background:#0284c7; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600; font-size:12px;">
+                                ✏️ Re-update This Camp
+                            </button>
+                        </div>
+                    `;
 
-                    .bindPopup(
+                    popupDiv.querySelector(".popup-reupdate-btn").addEventListener("click", function(ev) {
+                        ev.stopPropagation();
+                        selectCampForUpdate(camp);
+                        campMap.closePopup();
+                    });
 
-                        "<b>" +
-                        escapeHtml(
-                            camp.camp_name
-                        ) +
-                        "</b><br>" +
+                    marker.bindPopup(popupDiv);
 
-                        "District: " +
-                        escapeHtml(
-                            camp.district
-                        ) +
-
-                        "<br>Occupants: " +
-
-                        camp.current_population +
-
-                        "/" +
-
-                        camp.capacity
-
-                    );
+                    marker.on("click", function() {
+                        selectCampForUpdate(camp);
+                    });
 
                 }
 
             });
+
+            // If URL has ?camp_id=, pre-select it
+            const urlParams = new URLSearchParams(window.location.search);
+            const activeCampId = urlParams.get("camp_id");
+            if (activeCampId) {
+                const found = allLoadedCamps.find(c => c.id == activeCampId);
+                if (found) {
+                    selectCampForUpdate(found);
+                }
+            }
 
         })
 

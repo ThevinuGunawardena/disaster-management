@@ -69,6 +69,10 @@ if ($action === 'save_all') {
     |--------------------------------------------------------------------------
     */
 
+    $camp_id = (int)(
+        $_POST['camp_id'] ?? 0
+    );
+
     $camp_name = trim(
         $_POST['camp_name'] ?? ''
     );
@@ -153,19 +157,36 @@ if ($action === 'save_all') {
 
     /*
     |--------------------------------------------------------------------------
-    | VALIDATE FAMILY
+    | VALIDATE FAMILY (IF PROVIDED)
     |--------------------------------------------------------------------------
     */
 
-    if (
-        $family_head === '' ||
-        $members <= 0 ||
-        $infants < 0
-    ) {
+    $has_family = (
+        $family_head !== '' ||
+        $members > 0
+    );
 
-        die(
-            "Please complete all Family Intake details."
-        );
+    if ($has_family) {
+
+        if (
+            $family_head === '' ||
+            $members <= 0 ||
+            $infants < 0
+        ) {
+
+            die(
+                "Please complete all Family Intake details."
+            );
+
+        }
+
+        if ($infants > $members) {
+
+            die(
+                "Number of infants cannot be greater than total members."
+            );
+
+        }
 
     }
 
@@ -173,19 +194,30 @@ if ($action === 'save_all') {
 
     /*
     |--------------------------------------------------------------------------
-    | CHECK FAMILY MEMBER COUNT
-    |--------------------------------------------------------------------------
-    |
-    | Infants cannot be greater than total members.
-    |
+    | DETECT SUPPLY REQUESTS
     |--------------------------------------------------------------------------
     */
 
-    if ($infants > $members) {
+    $has_supplies = false;
 
-        die(
-            "Number of infants cannot be greater than total members."
-        );
+    if (
+        is_array($items) &&
+        is_array($quantities)
+    ) {
+
+        for ($i = 0; $i < count($items); $i++) {
+
+            $it = trim($items[$i] ?? '');
+            $qt = (int)($quantities[$i] ?? 0);
+
+            if ($it !== '' && $qt > 0) {
+
+                $has_supplies = true;
+                break;
+
+            }
+
+        }
 
     }
 
@@ -193,19 +225,38 @@ if ($action === 'save_all') {
 
     /*
     |--------------------------------------------------------------------------
-    | VALIDATE SUPPLY REQUESTS
+    | IF NO CAMP ID, CHECK IF CAMP ALREADY EXISTS WITH SAME LAT/LNG
     |--------------------------------------------------------------------------
     */
 
-    if (
-        !is_array($items) ||
-        !is_array($quantities) ||
-        count($items) === 0
-    ) {
+    if ($camp_id <= 0) {
 
-        die(
-            "Please add at least one supply request."
-        );
+        $lat_float = (float)$latitude;
+        $lng_float = (float)$longitude;
+
+        $check_stmt = $conn->prepare("
+            SELECT id FROM camps
+            WHERE ABS(latitude - ?) < 0.00005
+              AND ABS(longitude - ?) < 0.00005
+            ORDER BY id DESC LIMIT 1
+        ");
+
+        if ($check_stmt) {
+
+            $check_stmt->bind_param("dd", $lat_float, $lng_float);
+            $check_stmt->execute();
+
+            $c_res = $check_stmt->get_result();
+
+            if ($c_row = $c_res->fetch_assoc()) {
+
+                $camp_id = (int)$c_row['id'];
+
+            }
+
+            $check_stmt->close();
+
+        }
 
     }
 
@@ -225,298 +276,280 @@ if ($action === 'save_all') {
 
         /*
         ==============================================================
-        1. CREATE CAMP
+        1. RE-UPDATE OR CREATE CAMP
         ==============================================================
         */
 
-        $stmt = $conn->prepare("
-            INSERT INTO camps
-            (
-                camp_name,
-                district,
-                capacity,
-                current_population,
-                latitude,
-                longitude,
-                managed_by
-            )
-            VALUES
-            (?, ?, ?, 0, ?, ?, ?)
-        ");
-
-
-        if (!$stmt) {
-
-            throw new Exception(
-                "Camp database error: " .
-                $conn->error
-            );
-
-        }
-
-
-        $stmt->bind_param(
-            "ssissi",
-            $camp_name,
-            $district,
-            $capacity,
-            $latitude,
-            $longitude,
-            $user_id
-        );
-
-
-        if (!$stmt->execute()) {
-
-            throw new Exception(
-                "Failed to register camp: " .
-                $stmt->error
-            );
-
-        }
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | GET NEW CAMP ID
-        |--------------------------------------------------------------------------
-        */
-
-        $camp_id = $conn->insert_id;
-
-
-        $stmt->close();
-
-
-
-        /*
-        ==============================================================
-        2. SAVE FAMILY
-        ==============================================================
-        */
-
-        $stmt = $conn->prepare("
-            INSERT INTO families
-            (
-                camp_id,
-                family_head_name,
-                members_count,
-                infants_count,
-                special_needs_details
-            )
-            VALUES
-            (?, ?, ?, ?, ?)
-        ");
-
-
-        if (!$stmt) {
-
-            throw new Exception(
-                "Family database error: " .
-                $conn->error
-            );
-
-        }
-
-
-        $stmt->bind_param(
-            "isiis",
-            $camp_id,
-            $family_head,
-            $members,
-            $infants,
-            $special_needs
-        );
-
-
-        if (!$stmt->execute()) {
-
-            throw new Exception(
-                "Failed to save family: " .
-                $stmt->error
-            );
-
-        }
-
-
-        $stmt->close();
-
-
-
-        /*
-        ==============================================================
-        3. UPDATE CAMP POPULATION
-        ==============================================================
-        */
-
-        $stmt = $conn->prepare("
-            UPDATE camps
-            SET current_population = ?
-            WHERE id = ?
-            AND managed_by = ?
-        ");
-
-
-        if (!$stmt) {
-
-            throw new Exception(
-                "Population update error: " .
-                $conn->error
-            );
-
-        }
-
-
-        $stmt->bind_param(
-            "iii",
-            $members,
-            $camp_id,
-            $user_id
-        );
-
-
-        if (!$stmt->execute()) {
-
-            throw new Exception(
-                "Failed to update camp population: " .
-                $stmt->error
-            );
-
-        }
-
-
-        $stmt->close();
-
-
-
-        /*
-        ==============================================================
-        4. SAVE SUPPLY REQUESTS
-        ==============================================================
-        */
-
-        $stmt = $conn->prepare("
-            INSERT INTO supply_requests
-            (
-                camp_id,
-                item_type,
-                quantity,
-                requested_by,
-                status
-            )
-            VALUES
-            (?, ?, ?, ?, 'Pending')
-        ");
-
-
-        if (!$stmt) {
-
-            throw new Exception(
-                "Supply request database error: " .
-                $conn->error
-            );
-
-        }
-
-
-        $valid_supply_count = 0;
-
-
-        for (
-            $i = 0;
-            $i < count($items);
-            $i++
-        ) {
-
-
-            $item = trim(
-                $items[$i] ?? ''
-            );
-
-
-            $qty = (int)(
-                $quantities[$i] ?? 0
-            );
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Ignore completely empty rows
-            |--------------------------------------------------------------------------
-            */
-
-            if (
-                $item === '' &&
-                $qty === 0
-            ) {
-
-                continue;
-
-            }
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Validate supply row
-            |--------------------------------------------------------------------------
-            */
-
-            if (
-                $item === '' ||
-                $qty <= 0
-            ) {
+        if ($camp_id > 0) {
+
+            $stmt = $conn->prepare("
+                UPDATE camps
+                SET
+                    camp_name = ?,
+                    capacity = ?,
+                    latitude = ?,
+                    longitude = ?
+                WHERE id = ?
+            ");
+
+            if (!$stmt) {
 
                 throw new Exception(
-                    "Please enter a valid item and quantity for every supply row."
+                    "Camp database error: " .
+                    $conn->error
                 );
 
             }
 
-
-            /*
-            |--------------------------------------------------------------------------
-            | Insert supply request
-            |--------------------------------------------------------------------------
-            */
-
             $stmt->bind_param(
-                "isii",
-                $camp_id,
-                $item,
-                $qty,
-                $user_id
+                "sissi",
+                $camp_name,
+                $capacity,
+                $latitude,
+                $longitude,
+                $camp_id
             );
-
 
             if (!$stmt->execute()) {
 
                 throw new Exception(
-                    "Failed to save supply request: " .
+                    "Failed to update camp: " .
                     $stmt->error
                 );
 
             }
 
+            $stmt->close();
 
-            $valid_supply_count++;
+        } else {
+
+            $stmt = $conn->prepare("
+                INSERT INTO camps
+                (
+                    camp_name,
+                    district,
+                    capacity,
+                    current_population,
+                    latitude,
+                    longitude,
+                    managed_by
+                )
+                VALUES
+                (?, ?, ?, 0, ?, ?, ?)
+            ");
+
+            if (!$stmt) {
+
+                throw new Exception(
+                    "Camp database error: " .
+                    $conn->error
+                );
+
+            }
+
+            $stmt->bind_param(
+                "ssissi",
+                $camp_name,
+                $district,
+                $capacity,
+                $latitude,
+                $longitude,
+                $user_id
+            );
+
+            if (!$stmt->execute()) {
+
+                throw new Exception(
+                    "Failed to register camp: " .
+                    $stmt->error
+                );
+
+            }
+
+            $camp_id = $conn->insert_id;
+
+            $stmt->close();
 
         }
 
 
-        $stmt->close();
+        /*
+        ==============================================================
+        2. SAVE FAMILY (IF ENTERED)
+        ==============================================================
+        */
+
+        if ($has_family) {
+
+            $stmt = $conn->prepare("
+                INSERT INTO families
+                (
+                    camp_id,
+                    family_head_name,
+                    members_count,
+                    infants_count,
+                    special_needs_details
+                )
+                VALUES
+                (?, ?, ?, ?, ?)
+            ");
+
+            if (!$stmt) {
+
+                throw new Exception(
+                    "Family database error: " .
+                    $conn->error
+                );
+
+            }
+
+            $stmt->bind_param(
+                "isiis",
+                $camp_id,
+                $family_head,
+                $members,
+                $infants,
+                $special_needs
+            );
+
+            if (!$stmt->execute()) {
+
+                throw new Exception(
+                    "Failed to save family: " .
+                    $stmt->error
+                );
+
+            }
+
+            $stmt->close();
+
+        }
+
 
 
         /*
-        |--------------------------------------------------------------------------
-        | MAKE SURE AT LEAST ONE SUPPLY WAS SAVED
-        |--------------------------------------------------------------------------
+        ==============================================================
+        3. ACCURATELY UPDATE CAMP POPULATION
+        ==============================================================
         */
 
-        if ($valid_supply_count === 0) {
+        $stmt = $conn->prepare("
+            UPDATE camps
+            SET current_population = (
+                SELECT COALESCE(SUM(members_count), 0)
+                FROM families
+                WHERE camp_id = ?
+            )
+            WHERE id = ?
+        ");
 
-            throw new Exception(
-                "Please add at least one supply request."
+        if ($stmt) {
+
+            $stmt->bind_param(
+                "ii",
+                $camp_id,
+                $camp_id
             );
+
+            if (!$stmt->execute()) {
+
+                throw new Exception(
+                    "Failed to update camp population: " .
+                    $stmt->error
+                );
+
+            }
+
+            $stmt->close();
+
+        }
+
+
+
+        /*
+        ==============================================================
+        4. SAVE SUPPLY REQUESTS (IF ENTERED)
+        ==============================================================
+        */
+
+        if ($has_supplies) {
+
+            $stmt = $conn->prepare("
+                INSERT INTO supply_requests
+                (
+                    camp_id,
+                    item_type,
+                    quantity,
+                    requested_by,
+                    status
+                )
+                VALUES
+                (?, ?, ?, ?, 'Pending')
+            ");
+
+            if (!$stmt) {
+
+                throw new Exception(
+                    "Supply request database error: " .
+                    $conn->error
+                );
+
+            }
+
+            for (
+                $i = 0;
+                $i < count($items);
+                $i++
+            ) {
+
+                $item = trim(
+                    $items[$i] ?? ''
+                );
+
+                $qty = (int)(
+                    $quantities[$i] ?? 0
+                );
+
+                if (
+                    $item === '' &&
+                    $qty === 0
+                ) {
+
+                    continue;
+
+                }
+
+                if (
+                    $item === '' ||
+                    $qty <= 0
+                ) {
+
+                    throw new Exception(
+                        "Please enter a valid item and quantity for every supply row."
+                    );
+
+                }
+
+                $stmt->bind_param(
+                    "isii",
+                    $camp_id,
+                    $item,
+                    $qty,
+                    $user_id
+                );
+
+                if (!$stmt->execute()) {
+
+                    throw new Exception(
+                        "Failed to save supply request: " .
+                        $stmt->error
+                    );
+
+                }
+
+            }
+
+            $stmt->close();
 
         }
 
@@ -538,7 +571,7 @@ if ($action === 'save_all') {
         */
 
         header(
-            "Location: index.php?saved=1"
+            "Location: index.php?saved=1&camp_id=" . $camp_id
         );
 
         exit;
@@ -554,15 +587,7 @@ if ($action === 'save_all') {
 
     catch (Exception $e) {
 
-
-        /*
-        |--------------------------------------------------------------
-        | Undo everything
-        |--------------------------------------------------------------
-        */
-
         $conn->rollback();
-
 
         die(
             "Save failed. No records were saved.<br><br>" .
@@ -572,6 +597,171 @@ if ($action === 'save_all') {
         );
 
     }
+
+}
+
+
+
+/*
+|--------------------------------------------------------------------------
+| UPDATE CAMP LOCATION ONLY ACTION
+|--------------------------------------------------------------------------
+*/
+
+if ($action === 'update_camp') {
+
+    if ($role !== 'Camp Officer') {
+
+        die("Access Denied.");
+
+    }
+
+    $camp_id = (int)(
+        $_POST['camp_id'] ?? 0
+    );
+
+    $camp_name = trim(
+        $_POST['camp_name'] ?? ''
+    );
+
+    $capacity = (int)(
+        $_POST['capacity'] ?? 0
+    );
+
+    $latitude = trim(
+        $_POST['latitude'] ?? ''
+    );
+
+    $longitude = trim(
+        $_POST['longitude'] ?? ''
+    );
+
+    $district = $user_district;
+
+    if (
+        $camp_name === '' ||
+        $capacity <= 0 ||
+        $latitude === '' ||
+        $longitude === ''
+    ) {
+
+        die("Please complete all Camp Location details.");
+
+    }
+
+    if ($camp_id <= 0) {
+
+        $lat_float = (float)$latitude;
+        $lng_float = (float)$longitude;
+
+        $check_stmt = $conn->prepare("
+            SELECT id FROM camps
+            WHERE ABS(latitude - ?) < 0.00005
+              AND ABS(longitude - ?) < 0.00005
+            ORDER BY id DESC LIMIT 1
+        ");
+
+        if ($check_stmt) {
+
+            $check_stmt->bind_param("dd", $lat_float, $lng_float);
+            $check_stmt->execute();
+            $c_res = $check_stmt->get_result();
+
+            if ($c_row = $c_res->fetch_assoc()) {
+
+                $camp_id = (int)$c_row['id'];
+
+            }
+
+            $check_stmt->close();
+
+        }
+
+    }
+
+    if ($camp_id > 0) {
+
+        $stmt = $conn->prepare("
+            UPDATE camps
+            SET
+                camp_name = ?,
+                capacity = ?,
+                latitude = ?,
+                longitude = ?
+            WHERE id = ?
+        ");
+
+        if (!$stmt) {
+
+            die("Database error: " . $conn->error);
+
+        }
+
+        $stmt->bind_param(
+            "sissi",
+            $camp_name,
+            $capacity,
+            $latitude,
+            $longitude,
+            $camp_id
+        );
+
+        if (!$stmt->execute()) {
+
+            die("Failed to update camp: " . $stmt->error);
+
+        }
+
+        $stmt->close();
+
+    } else {
+
+        $stmt = $conn->prepare("
+            INSERT INTO camps
+            (
+                camp_name,
+                district,
+                capacity,
+                current_population,
+                latitude,
+                longitude,
+                managed_by
+            )
+            VALUES
+            (?, ?, ?, 0, ?, ?, ?)
+        ");
+
+        if (!$stmt) {
+
+            die("Database error: " . $conn->error);
+
+        }
+
+        $stmt->bind_param(
+            "ssissi",
+            $camp_name,
+            $district,
+            $capacity,
+            $latitude,
+            $longitude,
+            $user_id
+        );
+
+        if (!$stmt->execute()) {
+
+            die("Failed to register camp: " . $stmt->error);
+
+        }
+
+        $camp_id = $conn->insert_id;
+
+        $stmt->close();
+
+    }
+
+    header("Location: index.php?saved=1&camp_id=" . $camp_id);
+
+    exit;
 
 }
 
@@ -596,6 +786,10 @@ if ($action === 'add_camp') {
 
     }
 
+
+    $camp_id = (int)(
+        $_POST['camp_id'] ?? 0
+    );
 
     $name = trim(
         $_POST['camp_name'] ?? ''
@@ -630,56 +824,119 @@ if ($action === 'add_camp') {
 
     }
 
+    if ($camp_id <= 0) {
 
+        $lat_float = (float)$latitude;
+        $lng_float = (float)$longitude;
 
-    $stmt = $conn->prepare("
-        INSERT INTO camps
-        (
-            camp_name,
-            district,
-            capacity,
-            current_population,
-            latitude,
-            longitude,
-            managed_by
-        )
-        VALUES
-        (?, ?, ?, 0, ?, ?, ?)
-    ");
+        $check_stmt = $conn->prepare("
+            SELECT id FROM camps
+            WHERE ABS(latitude - ?) < 0.00005
+              AND ABS(longitude - ?) < 0.00005
+            ORDER BY id DESC LIMIT 1
+        ");
 
+        if ($check_stmt) {
 
-    if (!$stmt) {
+            $check_stmt->bind_param("dd", $lat_float, $lng_float);
+            $check_stmt->execute();
+            $c_res = $check_stmt->get_result();
 
-        die(
-            "Database error: " .
-            $conn->error
-        );
+            if ($c_row = $c_res->fetch_assoc()) {
 
-    }
+                $camp_id = (int)$c_row['id'];
 
+            }
 
-    $stmt->bind_param(
-        "ssissi",
-        $name,
-        $district,
-        $capacity,
-        $latitude,
-        $longitude,
-        $user_id
-    );
+            $check_stmt->close();
 
-
-    if (!$stmt->execute()) {
-
-        die(
-            "Failed to register camp: " .
-            $stmt->error
-        );
+        }
 
     }
 
+    if ($camp_id > 0) {
 
-    $stmt->close();
+        $stmt = $conn->prepare("
+            UPDATE camps
+            SET
+                camp_name = ?,
+                capacity = ?,
+                latitude = ?,
+                longitude = ?
+            WHERE id = ?
+        ");
+
+        if (!$stmt) {
+
+            die("Database error: " . $conn->error);
+
+        }
+
+        $stmt->bind_param(
+            "sissi",
+            $name,
+            $capacity,
+            $latitude,
+            $longitude,
+            $camp_id
+        );
+
+        if (!$stmt->execute()) {
+
+            die("Failed to update camp: " . $stmt->error);
+
+        }
+
+        $stmt->close();
+
+    } else {
+
+        $stmt = $conn->prepare("
+            INSERT INTO camps
+            (
+                camp_name,
+                district,
+                capacity,
+                current_population,
+                latitude,
+                longitude,
+                managed_by
+            )
+            VALUES
+            (?, ?, ?, 0, ?, ?, ?)
+        ");
+
+        if (!$stmt) {
+
+            die(
+                "Database error: " .
+                $conn->error
+            );
+
+        }
+
+        $stmt->bind_param(
+            "ssissi",
+            $name,
+            $district,
+            $capacity,
+            $latitude,
+            $longitude,
+            $user_id
+        );
+
+        if (!$stmt->execute()) {
+
+            die(
+                "Failed to register camp: " .
+                $stmt->error
+            );
+
+        }
+
+        $stmt->close();
+
+    }
 
 
     header(
