@@ -903,6 +903,177 @@ if ($action === 'delete_camp') {
 
 /*
 |--------------------------------------------------------------------------
+| DELETE SUPPLY ITEM / REQUEST ACTION
+|--------------------------------------------------------------------------
+*/
+if ($action === 'delete_item' || $action === 'delete_req') {
+
+    if (!in_array($role, ['Camp Officer', 'District Admin', 'National Authority'])) {
+        die("Access Denied.");
+    }
+
+    $req_id = (int)($_POST['id'] ?? $_GET['id'] ?? 0);
+
+    if ($req_id <= 0) {
+        die("Invalid Supply Request ID.");
+    }
+
+    // Verify authorization
+    if ($role === 'National Authority') {
+        $check_stmt = $conn->prepare("
+            SELECT r.id, r.item_type, c.camp_name
+            FROM supply_requests AS r
+            INNER JOIN camps AS c ON r.camp_id = c.id
+            WHERE r.id = ?
+        ");
+        $check_stmt->bind_param("i", $req_id);
+    } elseif ($role === 'District Admin') {
+        $check_stmt = $conn->prepare("
+            SELECT r.id, r.item_type, c.camp_name
+            FROM supply_requests AS r
+            INNER JOIN camps AS c ON r.camp_id = c.id
+            WHERE r.id = ? AND (? = 'All' OR TRIM(LOWER(c.district)) = TRIM(LOWER(?)))
+        ");
+        $check_stmt->bind_param("iss", $req_id, $user_district, $user_district);
+    } else {
+        // Camp Officer
+        $check_stmt = $conn->prepare("
+            SELECT r.id, r.item_type, c.camp_name
+            FROM supply_requests AS r
+            INNER JOIN camps AS c ON r.camp_id = c.id
+            WHERE r.id = ? AND (r.requested_by = ? OR c.managed_by = ? OR TRIM(LOWER(c.district)) = TRIM(LOWER(?)))
+        ");
+        $check_stmt->bind_param("iiis", $req_id, $user_id, $user_id, $user_district);
+    }
+
+    if (!$check_stmt) {
+        die("Database error: " . $conn->error);
+    }
+
+    $check_stmt->execute();
+    $res = $check_stmt->get_result();
+
+    if ($res->num_rows === 0) {
+        die("Access Denied: Supply request not found or not in your jurisdiction.");
+    }
+
+    $req_info = $res->fetch_assoc();
+    $item_name_deleted = $req_info['item_type'];
+    $check_stmt->close();
+
+    $del_stmt = $conn->prepare("DELETE FROM supply_requests WHERE id = ?");
+    if (!$del_stmt) {
+        die("Database error: " . $conn->error);
+    }
+    $del_stmt->bind_param("i", $req_id);
+
+    if (!$del_stmt->execute()) {
+        die("Failed to delete supply item: " . $del_stmt->error);
+    }
+    $del_stmt->close();
+
+    header("Location: index.php?deleted_item=1&item_name=" . urlencode($item_name_deleted));
+    exit;
+}
+
+
+
+/*
+|--------------------------------------------------------------------------
+| DELETE DISPLACED PERSON / FAMILY ACTION
+|--------------------------------------------------------------------------
+*/
+if ($action === 'delete_person' || $action === 'delete_family') {
+
+    if (!in_array($role, ['Camp Officer', 'District Admin', 'National Authority'])) {
+        die("Access Denied.");
+    }
+
+    $family_id = (int)($_POST['id'] ?? $_GET['id'] ?? 0);
+
+    if ($family_id <= 0) {
+        die("Invalid Family/Person ID.");
+    }
+
+    // Verify authorization and get camp_id to recalculate population
+    if ($role === 'National Authority') {
+        $check_stmt = $conn->prepare("
+            SELECT f.id, f.camp_id, f.family_head_name, c.camp_name
+            FROM families AS f
+            INNER JOIN camps AS c ON f.camp_id = c.id
+            WHERE f.id = ?
+        ");
+        $check_stmt->bind_param("i", $family_id);
+    } elseif ($role === 'District Admin') {
+        $check_stmt = $conn->prepare("
+            SELECT f.id, f.camp_id, f.family_head_name, c.camp_name
+            FROM families AS f
+            INNER JOIN camps AS c ON f.camp_id = c.id
+            WHERE f.id = ? AND (? = 'All' OR TRIM(LOWER(c.district)) = TRIM(LOWER(?)))
+        ");
+        $check_stmt->bind_param("iss", $family_id, $user_district, $user_district);
+    } else {
+        // Camp Officer
+        $check_stmt = $conn->prepare("
+            SELECT f.id, f.camp_id, f.family_head_name, c.camp_name
+            FROM families AS f
+            INNER JOIN camps AS c ON f.camp_id = c.id
+            WHERE f.id = ? AND (c.managed_by = ? OR TRIM(LOWER(c.district)) = TRIM(LOWER(?)))
+        ");
+        $check_stmt->bind_param("iis", $family_id, $user_id, $user_district);
+    }
+
+    if (!$check_stmt) {
+        die("Database error: " . $conn->error);
+    }
+
+    $check_stmt->execute();
+    $res = $check_stmt->get_result();
+
+    if ($res->num_rows === 0) {
+        die("Access Denied: Family intake record not found or not in your jurisdiction.");
+    }
+
+    $fam_info = $res->fetch_assoc();
+    $fam_head_deleted = $fam_info['family_head_name'];
+    $camp_id_affected = (int)$fam_info['camp_id'];
+    $check_stmt->close();
+
+    $del_stmt = $conn->prepare("DELETE FROM families WHERE id = ?");
+    if (!$del_stmt) {
+        die("Database error: " . $conn->error);
+    }
+    $del_stmt->bind_param("i", $family_id);
+
+    if (!$del_stmt->execute()) {
+        die("Failed to delete person/family: " . $del_stmt->error);
+    }
+    $del_stmt->close();
+
+    // Recalculate camp population
+    $pop_stmt = $conn->prepare("
+        UPDATE camps
+        SET current_population = (
+            SELECT COALESCE(SUM(members_count), 0)
+            FROM families
+            WHERE camp_id = ?
+        )
+        WHERE id = ?
+    ");
+    if ($pop_stmt) {
+        $pop_stmt->bind_param("ii", $camp_id_affected, $camp_id_affected);
+        $pop_stmt->execute();
+        $pop_stmt->close();
+    }
+
+    header("Location: index.php?deleted_person=1&person_name=" . urlencode($fam_head_deleted));
+    exit;
+}
+
+
+
+/*
+|--------------------------------------------------------------------------
 | OLD ADD CAMP ACTION
 |--------------------------------------------------------------------------
 |
