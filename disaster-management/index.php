@@ -598,6 +598,13 @@ if ($role === 'National Authority') {
     </div>
 <?php endif; ?>
 
+<?php if (isset($_GET['deleted'])): ?>
+    <div style="background:#fee2e2; border:1px solid #fca5a5; color:#b91c1c; padding:12px 18px; border-radius:8px; margin-bottom:20px; font-weight:600; display:flex; justify-content:space-between; align-items:center;">
+        <span>✓ Camp location <?php echo !empty($_GET['camp_name']) ? '"' . htmlspecialchars($_GET['camp_name']) . '" ' : ''; ?>was deleted successfully.</span>
+        <button type="button" onclick="this.parentElement.remove()" style="background:none; border:none; color:#b91c1c; font-size:16px; cursor:pointer;">✕</button>
+    </div>
+<?php endif; ?>
+
 <?php if ($role === 'Camp Officer'): ?>
 
 
@@ -625,12 +632,12 @@ if ($role === 'National Authority') {
             </div>
 
             <p class="instruction" style="margin-bottom:12px;">
-                Select an existing camp below or click a map marker to re-update it. Click an empty spot to create a new camp.
+                Select an existing camp below or click a map marker to modify its details and coordinates. Click an empty spot to create a new camp.
             </p>
 
             <div style="margin-bottom:12px;">
                 <select id="campSelect" style="width:100%; padding:9px 12px; border-radius:6px; border:1px solid #cbd5e1; font-size:14px; background:#fff;">
-                    <option value="">-- Choose Existing Camp to Re-update --</option>
+                    <option value="">-- Choose Existing Camp to Modify / View --</option>
                     <?php foreach ($my_camps as $c): ?>
                         <option 
                             value="<?php echo (int)$c['id']; ?>"
@@ -688,11 +695,14 @@ if ($role === 'National Authority') {
             </div>
 
             <div id="campActionButtons" style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;">
+                <button type="button" id="updateCampOnlyBtn" onclick="submitCampUpdateOnly()" style="display:none; background:#0284c7; color:white; border:none; padding:8px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:600;">
+                    💾 Save Modified Details
+                </button>
+                <button type="button" id="deleteCampBtn" onclick="deleteSelectedCamp()" style="display:none; background:#ef4444; color:white; border:none; padding:8px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:600;">
+                    🗑️ Delete Location
+                </button>
                 <button type="button" id="resetCampBtn" onclick="resetToNewCamp()" style="display:none; background:#64748b; color:white; border:none; padding:8px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:600;">
                     ↺ Switch to New Camp Mode
-                </button>
-                <button type="button" id="updateCampOnlyBtn" onclick="submitCampUpdateOnly()" style="display:none; background:#0284c7; color:white; border:none; padding:8px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:600;">
-                    💾 Re-update Camp Details Only
                 </button>
             </div>
 
@@ -852,6 +862,80 @@ if ($role === 'National Authority') {
     </div>
 
 </form>
+
+
+<!-- ==========================================================
+     MY MANAGED CAMPS & MAP LOCATIONS
+========================================================== -->
+<div class="card" style="margin-top:25px; width:100%;">
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h2 style="margin:0;">My Managed Camps & Map Locations</h2>
+        <span style="background:#e0f2fe; color:#0369a1; padding:4px 10px; border-radius:12px; font-size:12px; font-weight:600;">
+            Managed Camps: <?php echo count($my_camps); ?>
+        </span>
+    </div>
+
+    <p style="margin-bottom:15px; color:#64748b;">
+        Review your camp details, modify information and coordinates, or delete locations when camps close.
+    </p>
+
+    <?php if (count($my_camps) > 0): ?>
+
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Camp Name</th>
+                    <th>District</th>
+                    <th>Capacity</th>
+                    <th>Current Population</th>
+                    <th>Coordinates</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($my_camps as $c): ?>
+                    <tr>
+                        <td><strong><?php echo htmlspecialchars($c['camp_name']); ?></strong></td>
+                        <td><?php echo htmlspecialchars($c['district']); ?></td>
+                        <td><?php echo (int)$c['capacity']; ?></td>
+                        <td>
+                            <span style="background:#f1f5f9; padding:2px 8px; border-radius:4px; font-weight:600;">
+                                <?php echo (int)$c['current_population']; ?> / <?php echo (int)$c['capacity']; ?>
+                            </span>
+                        </td>
+                        <td style="font-size:12px; color:#64748b; font-family:monospace;">
+                            <?php echo number_format((float)$c['latitude'], 5); ?>, <?php echo number_format((float)$c['longitude'], 5); ?>
+                        </td>
+                        <td style="white-space:nowrap;">
+                            <button
+                                type="button"
+                                class="btn-action"
+                                style="background:#0284c7; margin-right:5px; border:none; cursor:pointer;"
+                                onclick="editCampFromTable(<?php echo htmlspecialchars(json_encode($c)); ?>)"
+                            >
+                                ✏️ Modify Details
+                            </button>
+                            <a
+                                href="actions.php?action=delete_camp&id=<?php echo (int)$c['id']; ?>"
+                                class="btn-action reject"
+                                onclick="return confirm('Are you sure you want to delete camp location <?php echo htmlspecialchars(addslashes($c['camp_name'])); ?>? This will remove the map marker and all associated records.');"
+                            >
+                                🗑️ Delete Location
+                            </a>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+
+    <?php else: ?>
+        <p style="padding:15px; color:#64748b;">
+            You have not registered any camps yet. Use the form above to add your first camp location.
+        </p>
+    <?php endif; ?>
+
+</div>
 
 
 <?php elseif ($role === 'District Admin'): ?>
@@ -1221,6 +1305,9 @@ function removeItem(button) {
 
 <?php if ($role === 'Camp Officer'): ?>
 
+const currentUserId = <?php echo (int)$user_id; ?>;
+const userDistrict = <?php echo json_encode($user_district); ?>;
+
 const campMapElement =
     document.getElementById("campMap");
 
@@ -1248,7 +1335,7 @@ function selectCampForUpdate(camp) {
 
     const badge = document.getElementById("campModeBadge");
     if (badge) {
-        badge.innerText = "Re-updating Existing Camp #" + camp.id;
+        badge.innerText = "Modifying Camp #" + camp.id + ": " + camp.camp_name;
         badge.style.background = "#fef3c7";
         badge.style.color = "#92400e";
     }
@@ -1258,6 +1345,9 @@ function selectCampForUpdate(camp) {
 
     const updateOnlyBtn = document.getElementById("updateCampOnlyBtn");
     if (updateOnlyBtn) updateOnlyBtn.style.display = "inline-block";
+
+    const deleteCampBtn = document.getElementById("deleteCampBtn");
+    if (deleteCampBtn) deleteCampBtn.style.display = "inline-block";
 
     if (campMap) {
         if (currentMarker) {
@@ -1299,9 +1389,32 @@ function resetToNewCamp() {
     const updateOnlyBtn = document.getElementById("updateCampOnlyBtn");
     if (updateOnlyBtn) updateOnlyBtn.style.display = "none";
 
+    const deleteCampBtn = document.getElementById("deleteCampBtn");
+    if (deleteCampBtn) deleteCampBtn.style.display = "none";
+
     if (currentMarker && campMap) {
         campMap.removeLayer(currentMarker);
         currentMarker = null;
+    }
+}
+
+function deleteSelectedCamp() {
+    const id = document.getElementById("camp_id").value;
+    const name = document.getElementById("camp_name").value || "this camp";
+    if (!id) {
+        alert("Please select a camp to delete.");
+        return;
+    }
+    if (confirm("Are you sure you want to delete camp location \"" + name + "\"? This will remove the map marker and associated records.")) {
+        window.location.href = "actions.php?action=delete_camp&id=" + encodeURIComponent(id);
+    }
+}
+
+function editCampFromTable(camp) {
+    selectCampForUpdate(camp);
+    const card = document.querySelector(".card");
+    if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 }
 
@@ -1362,6 +1475,7 @@ if (campMapElement) {
 
         const clickedLat = e.latlng.lat;
         const clickedLng = e.latlng.lng;
+        const currentCampId = document.getElementById("camp_id").value;
 
         // Check if user clicked near an existing camp marker
         const matchedCamp = allLoadedCamps.find(c => {
@@ -1371,6 +1485,22 @@ if (campMapElement) {
 
         if (matchedCamp) {
             selectCampForUpdate(matchedCamp);
+        } else if (currentCampId) {
+            // Modifying an existing camp: update coordinates on map click!
+            document.getElementById("lat").value = clickedLat.toFixed(6);
+            document.getElementById("lng").value = clickedLng.toFixed(6);
+
+            const badge = document.getElementById("campModeBadge");
+            if (badge) {
+                badge.innerText = "📍 Coordinates Relocated for Camp #" + currentCampId;
+                badge.style.background = "#fef08a";
+                badge.style.color = "#854d0e";
+            }
+
+            if (currentMarker) {
+                campMap.removeLayer(currentMarker);
+            }
+            currentMarker = L.marker([clickedLat, clickedLng]).addTo(campMap);
         } else {
             document.getElementById("lat").value =
                 clickedLat.toFixed(6);
@@ -1394,6 +1524,9 @@ if (campMapElement) {
 
             const updateOnlyBtn = document.getElementById("updateCampOnlyBtn");
             if (updateOnlyBtn) updateOnlyBtn.style.display = "none";
+
+            const deleteCampBtn = document.getElementById("deleteCampBtn");
+            if (deleteCampBtn) deleteCampBtn.style.display = "none";
 
             if (currentMarker) {
                 campMap.removeLayer(currentMarker);
@@ -1456,22 +1589,34 @@ if (campMapElement) {
                     ])
                     .addTo(campMap);
 
+                    const isMyCamp = (
+                        camp.managed_by === currentUserId ||
+                        (camp.district && camp.district.toLowerCase() === userDistrict.toLowerCase())
+                    );
+
                     const popupDiv = document.createElement("div");
                     popupDiv.innerHTML = `
-                        <div style="font-family:sans-serif; min-width:180px; padding:2px;">
+                        <div style="font-family:sans-serif; min-width:190px; padding:2px;">
                             <strong style="font-size:14px; color:#1e293b; display:block; margin-bottom:4px;">${escapeHtml(camp.camp_name)}</strong>
                             <div style="color:#64748b; font-size:12px; line-height:1.5;">
                                 <strong>District:</strong> ${escapeHtml(camp.district)}<br>
                                 <strong>Occupants:</strong> ${camp.current_population} / ${camp.capacity}<br>
                                 <strong>Coords:</strong> ${lat.toFixed(5)}, ${lng.toFixed(5)}
                             </div>
-                            <button type="button" class="popup-reupdate-btn" style="margin-top:8px; padding:6px 10px; width:100%; background:#0284c7; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600; font-size:12px;">
-                                ✏️ Re-update This Camp
-                            </button>
+                            <div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">
+                                <button type="button" class="popup-modify-btn" style="padding:6px 10px; width:100%; background:#0284c7; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600; font-size:12px;">
+                                    ✏️ Modify Camp Details
+                                </button>
+                                ${isMyCamp ? `
+                                    <a href="actions.php?action=delete_camp&id=${camp.id}" onclick="return confirm('Are you sure you want to delete camp location \\'${escapeHtml(camp.camp_name)}\\'? This will remove the map marker.');" style="display:block; text-align:center; padding:5px 10px; background:#ef4444; color:white; border-radius:4px; text-decoration:none; font-weight:600; font-size:12px;">
+                                        🗑️ Delete Location
+                                    </a>
+                                ` : ''}
+                            </div>
                         </div>
                     `;
 
-                    popupDiv.querySelector(".popup-reupdate-btn").addEventListener("click", function(ev) {
+                    popupDiv.querySelector(".popup-modify-btn").addEventListener("click", function(ev) {
                         ev.stopPropagation();
                         selectCampForUpdate(camp);
                         campMap.closePopup();

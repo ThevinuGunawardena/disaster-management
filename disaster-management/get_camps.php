@@ -65,7 +65,8 @@ $sql = "
         capacity,
         current_population,
         latitude,
-        longitude
+        longitude,
+        managed_by
     FROM camps
     WHERE latitude IS NOT NULL
     AND longitude IS NOT NULL
@@ -111,7 +112,10 @@ while ($row = $result->fetch_assoc()) {
             (float)$row["latitude"],
 
         "longitude" =>
-            (float)$row["longitude"]
+            (float)$row["longitude"],
+
+        "managed_by" =>
+            (int)$row["managed_by"]
 
     ];
 

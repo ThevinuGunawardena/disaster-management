@@ -769,6 +769,100 @@ if ($action === 'update_camp') {
 
 /*
 |--------------------------------------------------------------------------
+| DELETE CAMP LOCATION ACTION
+|--------------------------------------------------------------------------
+*/
+
+if ($action === 'delete_camp') {
+
+    if ($role !== 'Camp Officer') {
+
+        die("Access Denied.");
+
+    }
+
+    $camp_id = (int)(
+        $_POST['camp_id'] ?? $_GET['id'] ?? 0
+    );
+
+    if ($camp_id <= 0) {
+
+        die("Invalid Camp ID.");
+
+    }
+
+    // Verify ownership: Camp Officer can delete camps they manage or in their district
+    $check_stmt = $conn->prepare("
+        SELECT id, camp_name FROM camps
+        WHERE id = ? AND (managed_by = ? OR district = ?)
+    ");
+
+    if (!$check_stmt) {
+
+        die("Database error: " . $conn->error);
+
+    }
+
+    $check_stmt->bind_param(
+        "iis",
+        $camp_id,
+        $user_id,
+        $user_district
+    );
+
+    $check_stmt->execute();
+    $res = $check_stmt->get_result();
+
+    if ($res->num_rows === 0) {
+
+        die("Access Denied: You can only delete your own camps.");
+
+    }
+
+    $camp_info = $res->fetch_assoc();
+    $camp_name_deleted = $camp_info['camp_name'];
+    $check_stmt->close();
+
+    // Delete camp (cascades to associated families and supply requests)
+    $del_stmt = $conn->prepare("
+        DELETE FROM camps
+        WHERE id = ? AND (managed_by = ? OR district = ?)
+    ");
+
+    if (!$del_stmt) {
+
+        die("Database error: " . $conn->error);
+
+    }
+
+    $del_stmt->bind_param(
+        "iis",
+        $camp_id,
+        $user_id,
+        $user_district
+    );
+
+    if (!$del_stmt->execute()) {
+
+        die("Failed to delete camp: " . $del_stmt->error);
+
+    }
+
+    $del_stmt->close();
+
+    header(
+        "Location: index.php?deleted=1&camp_name=" .
+        urlencode($camp_name_deleted)
+    );
+
+    exit;
+
+}
+
+
+
+/*
+|--------------------------------------------------------------------------
 | OLD ADD CAMP ACTION
 |--------------------------------------------------------------------------
 |
