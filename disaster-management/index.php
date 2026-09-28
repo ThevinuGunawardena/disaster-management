@@ -53,9 +53,11 @@ if ($role === 'Camp Officer') {
 */
 
 $district_requests = [];
+$district_families = [];
 
 if ($role === 'District Admin') {
 
+    // 1. Pending supply requests with camp special requirements
     $stmt = $conn->prepare("
         SELECT
             r.id,
@@ -63,7 +65,14 @@ if ($role === 'District Admin') {
             r.quantity,
             r.status,
             c.camp_name,
-            c.district
+            c.district,
+            (
+                SELECT GROUP_CONCAT(DISTINCT f.special_needs_details SEPARATOR ' • ')
+                FROM families AS f
+                WHERE f.camp_id = c.id
+                  AND TRIM(f.special_needs_details) != ''
+                  AND LOWER(TRIM(f.special_needs_details)) != 'none'
+            ) AS camp_special_needs
         FROM supply_requests AS r
         INNER JOIN camps AS c
             ON r.camp_id = c.id
@@ -85,8 +94,39 @@ if ($role === 'District Admin') {
 
         $stmt->close();
     }
-}
 
+    // 2. All registered families in this district with special requirements details
+    $stmt_fam = $conn->prepare("
+        SELECT
+            f.id,
+            f.family_head_name,
+            f.members_count,
+            f.infants_count,
+            f.special_needs_details,
+            f.created_at,
+            c.camp_name,
+            c.district
+        FROM families AS f
+        INNER JOIN camps AS c
+            ON f.camp_id = c.id
+        WHERE TRIM(LOWER(c.district)) = TRIM(LOWER(?))
+        ORDER BY f.id DESC
+    ");
+
+    if ($stmt_fam) {
+
+        $stmt_fam->bind_param("s", $user_district);
+        $stmt_fam->execute();
+
+        $result_fam = $stmt_fam->get_result();
+
+        while ($row = $result_fam->fetch_assoc()) {
+            $district_families[] = $row;
+        }
+
+        $stmt_fam->close();
+    }
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -823,14 +863,15 @@ if ($role === 'National Authority') {
 
 <div class="card">
 
-    <h2>Pending Supply Requests</h2>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h2 style="margin:0;">Pending Supply Requests</h2>
+        <span style="background:#fef3c7; color:#92400e; padding:4px 10px; border-radius:12px; font-size:12px; font-weight:600;">
+            Pending: <?php echo count($district_requests); ?>
+        </span>
+    </div>
 
-    <p>
-        District:
-
-        <strong>
-            <?php echo htmlspecialchars($user_district); ?>
-        </strong>
+    <p style="margin-bottom:15px; color:#64748b;">
+        District: <strong><?php echo htmlspecialchars($user_district); ?></strong>
     </p>
 
 
@@ -845,6 +886,7 @@ if ($role === 'National Authority') {
                     <th>District</th>
                     <th>Requested Item</th>
                     <th>Quantity</th>
+                    <th>Camp Special Requirements</th>
                     <th>Status</th>
                     <th>Action</th>
                 </tr>
@@ -859,44 +901,40 @@ if ($role === 'National Authority') {
                     <tr>
 
                         <td>
-                            <?php
-                            echo htmlspecialchars(
-                                $req['camp_name']
-                            );
-                            ?>
+                            <strong>
+                                <?php echo htmlspecialchars($req['camp_name']); ?>
+                            </strong>
                         </td>
 
                         <td>
-                            <?php
-                            echo htmlspecialchars(
-                                $req['district']
-                            );
-                            ?>
+                            <?php echo htmlspecialchars($req['district']); ?>
                         </td>
 
                         <td>
-                            <?php
-                            echo htmlspecialchars(
-                                $req['item_type']
-                            );
-                            ?>
+                            <strong><?php echo htmlspecialchars($req['item_type']); ?></strong>
                         </td>
 
                         <td>
-                            <?php
-                            echo (int)$req['quantity'];
-                            ?>
+                            <?php echo (int)$req['quantity']; ?>
                         </td>
 
                         <td>
-                            <?php
-                            echo htmlspecialchars(
-                                $req['status']
-                            );
-                            ?>
+                            <?php if (!empty($req['camp_special_needs'])): ?>
+                                <span style="display:inline-block; background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; padding:4px 8px; border-radius:4px; font-size:12px; font-weight:600; line-height:1.4;">
+                                    ⚠️ <?php echo htmlspecialchars($req['camp_special_needs']); ?>
+                                </span>
+                            <?php else: ?>
+                                <span style="color:#94a3b8; font-size:12px; font-style:italic;">None reported</span>
+                            <?php endif; ?>
                         </td>
 
                         <td>
+                            <span style="background:#fef9c3; color:#854d0e; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600;">
+                                <?php echo htmlspecialchars($req['status']); ?>
+                            </span>
+                        </td>
+
+                        <td style="white-space:nowrap;">
 
                             <a
                                 href="actions.php?action=approve_req&id=<?php echo (int)$req['id']; ?>"
@@ -927,14 +965,94 @@ if ($role === 'National Authority') {
 
     <?php else: ?>
 
-        <p style="padding:15px;">
-
+        <p style="padding:15px; color:#64748b;">
             No pending supply requests found for
+            <strong><?php echo htmlspecialchars($user_district); ?></strong>.
+        </p>
 
-            <strong>
-                <?php echo htmlspecialchars($user_district); ?>
-            </strong>.
+    <?php endif; ?>
 
+</div>
+
+
+<!-- ==========================================================
+     DISTRICT REGISTERED FAMILIES & SPECIAL REQUIREMENTS
+========================================================== -->
+
+<div class="card" style="margin-top:25px; width:100%;">
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h2 style="margin:0;">Camp Families & Special Requirements</h2>
+        <span style="background:#e0f2fe; color:#0369a1; padding:4px 10px; border-radius:12px; font-size:12px; font-weight:600;">
+            Total Registered: <?php echo count($district_families); ?> Families
+        </span>
+    </div>
+
+    <p style="margin-bottom:15px; color:#64748b;">
+        Family intake details and special medical/dietary/accessibility requirements entered by Camp Officers across camps in <strong><?php echo htmlspecialchars($user_district); ?></strong>.
+    </p>
+
+    <?php if (count($district_families) > 0): ?>
+
+        <table class="data-table">
+
+            <thead>
+                <tr>
+                    <th>Camp Location</th>
+                    <th>Family Head</th>
+                    <th>Total Members</th>
+                    <th>Infants</th>
+                    <th>Special Requirement Details</th>
+                    <th>Date Recorded</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                <?php foreach ($district_families as $fam): ?>
+                    <tr>
+                        <td>
+                            <strong><?php echo htmlspecialchars($fam['camp_name']); ?></strong>
+                        </td>
+                        <td>
+                            <?php echo htmlspecialchars($fam['family_head_name']); ?>
+                        </td>
+                        <td>
+                            <?php echo (int)$fam['members_count']; ?>
+                        </td>
+                        <td>
+                            <?php if ((int)$fam['infants_count'] > 0): ?>
+                                <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-weight:600; font-size:12px;">
+                                    🍼 <?php echo (int)$fam['infants_count']; ?>
+                                </span>
+                            <?php else: ?>
+                                0
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?php
+                            $special = trim($fam['special_needs_details'] ?? '');
+                            if ($special !== '' && strtolower($special) !== 'none'):
+                            ?>
+                                <span style="display:inline-block; background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; padding:4px 10px; border-radius:4px; font-size:12px; font-weight:600; line-height:1.4;">
+                                    ⚠️ <?php echo htmlspecialchars($special); ?>
+                                </span>
+                            <?php else: ?>
+                                <span style="color:#94a3b8; font-style:italic; font-size:12px;">None reported</span>
+                            <?php endif; ?>
+                        </td>
+                        <td style="color:#64748b; font-size:12px; white-space:nowrap;">
+                            <?php echo htmlspecialchars(date('M d, Y H:i', strtotime($fam['created_at']))); ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+
+        </table>
+
+    <?php else: ?>
+
+        <p style="padding:15px; color:#64748b;">
+            No family intakes recorded for <strong><?php echo htmlspecialchars($user_district); ?></strong> yet.
         </p>
 
     <?php endif; ?>
