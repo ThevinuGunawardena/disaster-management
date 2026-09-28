@@ -610,7 +610,7 @@ if ($action === 'save_all') {
 
 if ($action === 'update_camp') {
 
-    if ($role !== 'Camp Officer') {
+    if (!in_array($role, ['Camp Officer', 'District Admin', 'National Authority'])) {
 
         die("Access Denied.");
 
@@ -636,7 +636,10 @@ if ($action === 'update_camp') {
         $_POST['longitude'] ?? ''
     );
 
-    $district = $user_district;
+    $district = trim($_POST['district'] ?? '');
+    if ($district === '' || ($role !== 'National Authority' && $user_district !== 'All')) {
+        $district = $user_district;
+    }
 
     if (
         $camp_name === '' ||
@@ -655,7 +658,7 @@ if ($action === 'update_camp') {
         $lng_float = (float)$longitude;
 
         $check_stmt = $conn->prepare("
-            SELECT id FROM camps
+            SELECT id, district FROM camps
             WHERE ABS(latitude - ?) < 0.00005
               AND ABS(longitude - ?) < 0.00005
             ORDER BY id DESC LIMIT 1
@@ -670,6 +673,9 @@ if ($action === 'update_camp') {
             if ($c_row = $c_res->fetch_assoc()) {
 
                 $camp_id = (int)$c_row['id'];
+                if ($district === '') {
+                    $district = $c_row['district'];
+                }
 
             }
 
@@ -681,30 +687,62 @@ if ($action === 'update_camp') {
 
     if ($camp_id > 0) {
 
-        $stmt = $conn->prepare("
-            UPDATE camps
-            SET
-                camp_name = ?,
-                capacity = ?,
-                latitude = ?,
-                longitude = ?
-            WHERE id = ?
-        ");
+        // Verify jurisdiction
+        if ($role === 'District Admin' && $user_district !== 'All') {
+            $auth_stmt = $conn->prepare("SELECT id FROM camps WHERE id = ? AND TRIM(LOWER(district)) = TRIM(LOWER(?))");
+            $auth_stmt->bind_param("is", $camp_id, $user_district);
+            $auth_stmt->execute();
+            if ($auth_stmt->get_result()->num_rows === 0) {
+                die("Access Denied: You can only modify camps in your district.");
+            }
+            $auth_stmt->close();
+        }
+
+        if ($district !== '') {
+            $stmt = $conn->prepare("
+                UPDATE camps
+                SET
+                    camp_name = ?,
+                    district = ?,
+                    capacity = ?,
+                    latitude = ?,
+                    longitude = ?
+                WHERE id = ?
+            ");
+            $stmt->bind_param(
+                "ssissi",
+                $camp_name,
+                $district,
+                $capacity,
+                $latitude,
+                $longitude,
+                $camp_id
+            );
+        } else {
+            $stmt = $conn->prepare("
+                UPDATE camps
+                SET
+                    camp_name = ?,
+                    capacity = ?,
+                    latitude = ?,
+                    longitude = ?
+                WHERE id = ?
+            ");
+            $stmt->bind_param(
+                "sissi",
+                $camp_name,
+                $capacity,
+                $latitude,
+                $longitude,
+                $camp_id
+            );
+        }
 
         if (!$stmt) {
 
             die("Database error: " . $conn->error);
 
         }
-
-        $stmt->bind_param(
-            "sissi",
-            $camp_name,
-            $capacity,
-            $latitude,
-            $longitude,
-            $camp_id
-        );
 
         if (!$stmt->execute()) {
 
@@ -715,6 +753,10 @@ if ($action === 'update_camp') {
         $stmt->close();
 
     } else {
+
+        if ($district === '') {
+            $district = !empty($user_district) && $user_district !== 'All' ? $user_district : 'Colombo';
+        }
 
         $stmt = $conn->prepare("
             INSERT INTO camps
@@ -775,7 +817,7 @@ if ($action === 'update_camp') {
 
 if ($action === 'delete_camp') {
 
-    if ($role !== 'Camp Officer') {
+    if (!in_array($role, ['Camp Officer', 'District Admin', 'National Authority'])) {
 
         die("Access Denied.");
 
@@ -791,11 +833,24 @@ if ($action === 'delete_camp') {
 
     }
 
-    // Verify ownership: Camp Officer can delete camps they manage or in their district
-    $check_stmt = $conn->prepare("
-        SELECT id, camp_name FROM camps
-        WHERE id = ? AND (managed_by = ? OR district = ?)
-    ");
+    // Verify authorization based on user role
+    if ($role === 'National Authority') {
+        $check_stmt = $conn->prepare("SELECT id, camp_name FROM camps WHERE id = ?");
+        $check_stmt->bind_param("i", $camp_id);
+    } elseif ($role === 'District Admin') {
+        $check_stmt = $conn->prepare("
+            SELECT id, camp_name FROM camps
+            WHERE id = ? AND (? = 'All' OR TRIM(LOWER(district)) = TRIM(LOWER(?)))
+        ");
+        $check_stmt->bind_param("iss", $camp_id, $user_district, $user_district);
+    } else {
+        // Camp Officer
+        $check_stmt = $conn->prepare("
+            SELECT id, camp_name FROM camps
+            WHERE id = ? AND (managed_by = ? OR TRIM(LOWER(district)) = TRIM(LOWER(?)))
+        ");
+        $check_stmt->bind_param("iis", $camp_id, $user_id, $user_district);
+    }
 
     if (!$check_stmt) {
 
@@ -803,19 +858,12 @@ if ($action === 'delete_camp') {
 
     }
 
-    $check_stmt->bind_param(
-        "iis",
-        $camp_id,
-        $user_id,
-        $user_district
-    );
-
     $check_stmt->execute();
     $res = $check_stmt->get_result();
 
     if ($res->num_rows === 0) {
 
-        die("Access Denied: You can only delete your own camps.");
+        die("Access Denied: Camp location not found or not in your jurisdiction.");
 
     }
 
@@ -824,10 +872,7 @@ if ($action === 'delete_camp') {
     $check_stmt->close();
 
     // Delete camp (cascades to associated families and supply requests)
-    $del_stmt = $conn->prepare("
-        DELETE FROM camps
-        WHERE id = ? AND (managed_by = ? OR district = ?)
-    ");
+    $del_stmt = $conn->prepare("DELETE FROM camps WHERE id = ?");
 
     if (!$del_stmt) {
 
@@ -835,12 +880,7 @@ if ($action === 'delete_camp') {
 
     }
 
-    $del_stmt->bind_param(
-        "iis",
-        $camp_id,
-        $user_id,
-        $user_district
-    );
+    $del_stmt->bind_param("i", $camp_id);
 
     if (!$del_stmt->execute()) {
 

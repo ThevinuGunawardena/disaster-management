@@ -54,6 +54,7 @@ if ($role === 'Camp Officer') {
 
 $district_requests = [];
 $district_families = [];
+$district_camps = [];
 $camp_families_map = [];
 
 if ($role === 'District Admin') {
@@ -144,6 +145,35 @@ if ($role === 'District Admin') {
 
         $stmt_fam->close();
     }
+
+    // 3. All registered camps in this district (to modify details & delete locations)
+    $stmt_camps = $conn->prepare("
+        SELECT
+            c.id,
+            c.camp_name,
+            c.district,
+            c.capacity,
+            c.current_population,
+            c.latitude,
+            c.longitude,
+            c.created_at,
+            COALESCE(u.username, 'Camp Officer') AS officer_name
+        FROM camps AS c
+        LEFT JOIN users AS u
+            ON c.managed_by = u.id
+        WHERE (? = 'All' OR TRIM(LOWER(c.district)) = TRIM(LOWER(?)))
+        ORDER BY c.id DESC
+    ");
+
+    if ($stmt_camps) {
+        $stmt_camps->bind_param("ss", $user_district, $user_district);
+        $stmt_camps->execute();
+        $res_camps = $stmt_camps->get_result();
+        while ($row = $res_camps->fetch_assoc()) {
+            $district_camps[] = $row;
+        }
+        $stmt_camps->close();
+    }
 }
 
 /*
@@ -159,6 +189,7 @@ $total_infants_national = 0;
 $total_special_needs_national = 0;
 $national_requests = [];
 $national_families = [];
+$national_camps_list = [];
 $national_camp_families_map = [];
 $national_districts = [];
 
@@ -264,6 +295,33 @@ if ($role === 'National Authority') {
                 $national_camp_families_map[$cid] = [];
             }
             $national_camp_families_map[$cid][] = $row;
+        }
+    }
+
+    // 5. All registered camps nationwide (to modify details & delete locations)
+    $res_camps = $conn->query("
+        SELECT
+            c.id,
+            c.camp_name,
+            c.district,
+            c.capacity,
+            c.current_population,
+            c.latitude,
+            c.longitude,
+            c.created_at,
+            COALESCE(u.username, 'Camp Officer') AS officer_name
+        FROM camps AS c
+        LEFT JOIN users AS u
+            ON c.managed_by = u.id
+        ORDER BY c.id DESC
+    ");
+
+    if ($res_camps) {
+        while ($row = $res_camps->fetch_assoc()) {
+            $national_camps_list[] = $row;
+            if (!empty($row['district']) && !in_array($row['district'], $national_districts)) {
+                $national_districts[] = $row['district'];
+            }
         }
     }
 
@@ -1132,6 +1190,9 @@ if ($role === 'National Authority') {
             <button type="button" class="view-toggle-btn active" id="btnViewAll" onclick="switchDistrictView('all')">
                 📋 View All
             </button>
+            <button type="button" class="view-toggle-btn" id="btnViewCamps" onclick="switchDistrictView('camps')">
+                📍 View Camps (<?php echo count($district_camps); ?>)
+            </button>
             <button type="button" class="view-toggle-btn" id="btnViewItems" onclick="switchDistrictView('items')">
                 📦 View Option: Items (<?php echo count($district_requests); ?>)
             </button>
@@ -1142,7 +1203,7 @@ if ($role === 'National Authority') {
     </div>
 
     <!-- Quick Stats Cards Row -->
-    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:15px; margin-bottom:15px;">
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap:15px; margin-bottom:15px;">
         <?php
             $pending_count = 0;
             $approved_count = 0;
@@ -1162,6 +1223,14 @@ if ($role === 'National Authority') {
                 }
             }
         ?>
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #8b5cf6; padding:12px 16px; border-radius:8px;">
+            <div style="font-size:12px; font-weight:600; color:#64748b; text-transform:uppercase;">Registered Camps</div>
+            <div style="font-size:24px; font-weight:700; color:#1e293b; margin:4px 0;"><?php echo count($district_camps); ?> <span style="font-size:13px; font-weight:500; color:#64748b;">locations</span></div>
+            <div style="font-size:12px; color:#475569;">
+                <span>Active in <?php echo htmlspecialchars($user_district); ?></span>
+            </div>
+        </div>
+
         <div style="background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #3b82f6; padding:12px 16px; border-radius:8px;">
             <div style="font-size:12px; font-weight:600; color:#64748b; text-transform:uppercase;">Relief Supply Items</div>
             <div style="font-size:24px; font-weight:700; color:#1e293b; margin:4px 0;"><?php echo count($district_requests); ?> <span style="font-size:13px; font-weight:500; color:#64748b;">requests</span></div>
@@ -1412,6 +1481,91 @@ if ($role === 'National Authority') {
 </div>
 
 <!-- ==========================================================
+     SECTION 3: CAMPS & MAP LOCATIONS (MODIFY & DELETE)
+========================================================== -->
+<div class="card" id="districtCampsCard" style="margin-bottom:25px; width:100%;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+        <div>
+            <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
+                <span>📍 View Option: Camp Locations Management</span>
+            </h2>
+            <p style="margin:4px 0 0 0; color:#64748b; font-size:13px;">
+                Inspect, modify camp operational details, update coordinates, or delete map locations in <?php echo htmlspecialchars($user_district); ?>.
+            </p>
+        </div>
+        <span style="background:#e0f2fe; color:#0369a1; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:600;">
+            <?php echo count($district_camps); ?> Registered Camps
+        </span>
+    </div>
+
+    <?php if (count($district_camps) > 0): ?>
+        <table class="data-table" id="districtCampsTable">
+            <thead>
+                <tr>
+                    <th style="width:22%;">Camp Name</th>
+                    <th style="width:12%;">Capacity</th>
+                    <th style="width:12%;">Occupants</th>
+                    <th style="width:20%;">Coordinates (Lat, Lng)</th>
+                    <th style="width:16%;">Officer In-Charge</th>
+                    <th style="width:18%; text-align:center;">Manage Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($district_camps as $c): ?>
+                    <tr class="district-camp-row" data-search="<?php echo htmlspecialchars(strtolower($c['camp_name'] . ' ' . $c['district'] . ' ' . ($c['officer_name'] ?? ''))); ?>">
+                        <td>
+                            <strong style="color:#0f172a; font-size:14px;">📍 <?php echo htmlspecialchars($c['camp_name']); ?></strong><br>
+                            <span style="color:#64748b; font-size:11px;"><?php echo htmlspecialchars($c['district']); ?> District</span>
+                        </td>
+                        <td>
+                            <span style="background:#f1f5f9; color:#0f172a; padding:3px 8px; border-radius:4px; font-weight:700; font-size:13px;">
+                                <?php echo (int)$c['capacity']; ?>
+                            </span>
+                        </td>
+                        <td>
+                            <span style="background:#f1f5f9; color:#0f172a; padding:3px 8px; border-radius:4px; font-weight:600; font-size:13px;">
+                                <?php echo (int)$c['current_population']; ?>
+                            </span>
+                        </td>
+                        <td>
+                            <span style="font-family:monospace; font-size:12px; color:#334155; background:#f8fafc; padding:2px 6px; border-radius:4px; border:1px solid #e2e8f0;">
+                                <?php echo htmlspecialchars($c['latitude']); ?>, <?php echo htmlspecialchars($c['longitude']); ?>
+                            </span>
+                        </td>
+                        <td>
+                            <span style="color:#475569; font-size:13px;">
+                                👮 <?php echo htmlspecialchars($c['officer_name'] ?? 'Officer'); ?>
+                            </span>
+                        </td>
+                        <td style="white-space:nowrap; text-align:center;">
+                            <button 
+                                type="button" 
+                                class="btn-action" 
+                                style="background:#0284c7;"
+                                onclick="openEditCampModal(<?php echo htmlspecialchars(json_encode($c)); ?>)"
+                                title="Modify camp details and coordinates"
+                            >
+                                ✏️ Modify Details
+                            </button>
+                            <button 
+                                type="button" 
+                                class="btn-action reject"
+                                onclick="deleteCampLocation(<?php echo (int)$c['id']; ?>, '<?php echo htmlspecialchars(addslashes($c['camp_name'])); ?>')"
+                                title="Delete camp location from map"
+                            >
+                                🗑️ Delete Location
+                            </button>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    <?php else: ?>
+        <p style="padding:15px; color:#64748b;">No camp locations registered in <strong><?php echo htmlspecialchars($user_district); ?></strong> yet.</p>
+    <?php endif; ?>
+</div>
+
+<!-- ==========================================================
      DISTRICT MODAL (VIEW OPTION FOR ITEM & PEOPLE)
 ========================================================== -->
 <div id="districtDetailModal" class="modal-overlay" style="display:none;" onclick="handleModalBackdropClick(event)">
@@ -1455,6 +1609,9 @@ if ($role === 'National Authority') {
             <span style="font-size:13px; font-weight:600; color:#475569; margin-right:4px;">👁️ View Option:</span>
             <button type="button" class="view-toggle-btn active" id="btnNatViewAll" onclick="switchNationalView('all')">
                 📋 View All Data
+            </button>
+            <button type="button" class="view-toggle-btn" id="btnNatViewCamps" onclick="switchNationalView('camps')">
+                📍 View Camps (<?php echo count($national_camps_list); ?>)
             </button>
             <button type="button" class="view-toggle-btn" id="btnNatViewItems" onclick="switchNationalView('items')">
                 📦 View Items (<?php echo count($national_requests); ?>)
@@ -1733,6 +1890,99 @@ if ($role === 'National Authority') {
 </div>
 
 <!-- ==========================================================
+     SECTION 3: NATIONWIDE CAMPS & LOCATIONS (MODIFY & DELETE)
+========================================================== -->
+<div class="card" id="nationalCampsCard" style="margin-bottom:25px; width:100%;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+        <div>
+            <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
+                <span>📍 Nationwide Camp Locations & Spatial Registry</span>
+            </h2>
+            <p style="margin:4px 0 0 0; color:#64748b; font-size:13px;">
+                Direct national operational management: modify camp parameters, update spatial coordinates, or delete map locations across all districts.
+            </p>
+        </div>
+        <span style="background:#e0f2fe; color:#0369a1; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:600;">
+            <?php echo count($national_camps_list); ?> Total Camps
+        </span>
+    </div>
+
+    <?php if (count($national_camps_list) > 0): ?>
+        <table class="data-table" id="nationalCampsTable">
+            <thead>
+                <tr>
+                    <th style="width:20%;">Camp Name</th>
+                    <th style="width:12%;">District</th>
+                    <th style="width:10%;">Capacity</th>
+                    <th style="width:10%;">Occupants</th>
+                    <th style="width:20%;">Coordinates (Lat, Lng)</th>
+                    <th style="width:12%;">Officer</th>
+                    <th style="width:16%; text-align:center;">Manage Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($national_camps_list as $c): ?>
+                    <tr class="national-camp-row" 
+                        data-search="<?php echo htmlspecialchars(strtolower($c['camp_name'] . ' ' . $c['district'] . ' ' . ($c['officer_name'] ?? ''))); ?>"
+                        data-district="<?php echo htmlspecialchars(strtolower($c['district'])); ?>"
+                    >
+                        <td>
+                            <strong style="color:#0f172a; font-size:14px;">📍 <?php echo htmlspecialchars($c['camp_name']); ?></strong>
+                        </td>
+                        <td>
+                            <span style="background:#e2e8f0; color:#334155; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600;">
+                                <?php echo htmlspecialchars($c['district']); ?>
+                            </span>
+                        </td>
+                        <td>
+                            <span style="background:#f1f5f9; color:#0f172a; padding:3px 8px; border-radius:4px; font-weight:700; font-size:13px;">
+                                <?php echo (int)$c['capacity']; ?>
+                            </span>
+                        </td>
+                        <td>
+                            <span style="background:#f1f5f9; color:#0f172a; padding:3px 8px; border-radius:4px; font-weight:600; font-size:13px;">
+                                <?php echo (int)$c['current_population']; ?>
+                            </span>
+                        </td>
+                        <td>
+                            <span style="font-family:monospace; font-size:12px; color:#334155; background:#f8fafc; padding:2px 6px; border-radius:4px; border:1px solid #e2e8f0;">
+                                <?php echo htmlspecialchars($c['latitude']); ?>, <?php echo htmlspecialchars($c['longitude']); ?>
+                            </span>
+                        </td>
+                        <td>
+                            <span style="color:#475569; font-size:13px;">
+                                👮 <?php echo htmlspecialchars($c['officer_name'] ?? 'Officer'); ?>
+                            </span>
+                        </td>
+                        <td style="white-space:nowrap; text-align:center;">
+                            <button 
+                                type="button" 
+                                class="btn-action" 
+                                style="background:#0284c7;"
+                                onclick="openEditCampModal(<?php echo htmlspecialchars(json_encode($c)); ?>)"
+                                title="Modify camp details and coordinates"
+                            >
+                                ✏️ Modify Details
+                            </button>
+                            <button 
+                                type="button" 
+                                class="btn-action reject"
+                                onclick="deleteCampLocation(<?php echo (int)$c['id']; ?>, '<?php echo htmlspecialchars(addslashes($c['camp_name'])); ?>')"
+                                title="Delete camp location from map"
+                            >
+                                🗑️ Delete Location
+                            </button>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    <?php else: ?>
+        <p style="padding:15px; color:#64748b;">No camp locations registered yet.</p>
+    <?php endif; ?>
+</div>
+
+<!-- ==========================================================
      NATIONAL DETAIL MODAL (VIEW OPTION FOR ITEM & PEOPLE)
 ========================================================== -->
 <div id="nationalDetailModal" class="modal-overlay" style="display:none;" onclick="handleNationalModalBackdropClick(event)">
@@ -1773,6 +2023,109 @@ if ($role === 'National Authority') {
 
 </div>
 
+<!-- ==========================================================
+     UNIVERSAL CAMP EDIT MODAL (MODIFY CAMP DETAILS & COORDS)
+========================================================== -->
+<div id="universalCampModal" class="modal-overlay" style="display:none;" onclick="handleCampModalBackdropClick(event)">
+    <div class="modal-content modal-animated" style="max-width:580px; width:92%; background:#fff; border-radius:12px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.2), 0 10px 10px -5px rgba(0,0,0,0.1); padding:0; overflow:hidden;">
+        <!-- Modal Header -->
+        <div style="padding:16px 22px; background:#1e293b; color:#fff; display:flex; justify-content:space-between; align-items:center;">
+            <h3 id="universalCampModalTitle" style="margin:0; font-size:17px; font-weight:700; color:#fff; display:flex; align-items:center; gap:8px;">
+                <span>✏️ Modify Camp Location & Details</span>
+            </h3>
+            <button type="button" onclick="closeUniversalCampModal()" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; line-height:1; width:30px; height:30px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">✕</button>
+        </div>
+        
+        <!-- Modal Form -->
+        <form id="universalCampForm" action="actions.php?action=update_camp" method="POST" style="margin:0;">
+            <input type="hidden" name="camp_id" id="modal_camp_id" value="">
+
+            <div style="padding:22px; max-height:75vh; overflow-y:auto;">
+                <p style="margin:0 0 16px 0; color:#64748b; font-size:13px; line-height:1.5;">
+                    Update the relief camp name, capacity, district jurisdiction, and geographical map coordinates.
+                </p>
+
+                <div style="margin-bottom:14px;">
+                    <label style="display:block; font-size:13px; font-weight:600; color:#334155; margin-bottom:6px;">Camp Name *</label>
+                    <input type="text" name="camp_name" id="modal_camp_name" required style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                </div>
+
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+                    <div>
+                        <label style="display:block; font-size:13px; font-weight:600; color:#334155; margin-bottom:6px;">District *</label>
+                        <?php if ($role === 'National Authority'): ?>
+                            <input list="sriLankaDistricts" type="text" name="district" id="modal_district" required style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; box-sizing:border-box;" placeholder="Choose or type district">
+                            <datalist id="sriLankaDistricts">
+                                <option value="Colombo">
+                                <option value="Gampaha">
+                                <option value="Kalutara">
+                                <option value="Kandy">
+                                <option value="Matale">
+                                <option value="Nuwara Eliya">
+                                <option value="Galle">
+                                <option value="Matara">
+                                <option value="Hambantota">
+                                <option value="Jaffna">
+                                <option value="Kilinochchi">
+                                <option value="Mannar">
+                                <option value="Vavuniya">
+                                <option value="Mullaitivu">
+                                <option value="Batticaloa">
+                                <option value="Ampara">
+                                <option value="Trincomalee">
+                                <option value="Kurunegala">
+                                <option value="Puttalam">
+                                <option value="Anuradhapura">
+                                <option value="Polonnaruwa">
+                                <option value="Badulla">
+                                <option value="Monaragala">
+                                <option value="Ratnapura">
+                                <option value="Kegalle">
+                            </datalist>
+                        <?php else: ?>
+                            <input type="text" name="district" id="modal_district" value="<?php echo htmlspecialchars($user_district); ?>" readonly style="width:100%; padding:10px 12px; border:1px solid #e2e8f0; border-radius:6px; font-size:14px; background:#f8fafc; color:#64748b; box-sizing:border-box;">
+                        <?php endif; ?>
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:13px; font-weight:600; color:#334155; margin-bottom:6px;">Capacity (Persons) *</label>
+                        <input type="number" name="capacity" id="modal_capacity" min="1" required style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+                    <div>
+                        <label style="display:block; font-size:13px; font-weight:600; color:#334155; margin-bottom:6px;">Latitude (GPS) *</label>
+                        <input type="text" name="latitude" id="modal_latitude" required style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; font-family:monospace; box-sizing:border-box;" placeholder="e.g. 6.9271">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:13px; font-weight:600; color:#334155; margin-bottom:6px;">Longitude (GPS) *</label>
+                        <input type="text" name="longitude" id="modal_longitude" required style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; font-family:monospace; box-sizing:border-box;" placeholder="e.g. 79.8612">
+                    </div>
+                </div>
+
+                <div id="modalCampStats" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:10px 14px; font-size:12px; color:#475569; display:flex; justify-content:space-between; align-items:center;">
+                    <span>Current Occupants: <strong id="modal_occupants" style="color:#0f172a;">0</strong></span>
+                    <span>Officer In-Charge: <strong id="modal_officer" style="color:#0f172a;">-</strong></span>
+                </div>
+            </div>
+
+            <!-- Modal Footer -->
+            <div style="padding:14px 22px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
+                <button type="button" id="btnDeleteFromModal" onclick="deleteCampFromModal()" style="padding:8px 16px; background:#fee2e2; color:#b91c1c; border:1px solid #fecaca; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">
+                    🗑️ Delete Map Location
+                </button>
+                <div style="display:flex; gap:10px;">
+                    <button type="button" onclick="closeUniversalCampModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">
+                        Cancel
+                    </button>
+                    <button type="submit" style="padding:8px 18px; background:#0284c7; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">
+                        💾 Save Changes
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
 
 <!-- ==========================================================
      LEAFLET JS
@@ -1856,6 +2209,73 @@ function removeItem(button) {
 
     }
 }
+
+/* ==========================================================
+   UNIVERSAL CAMP MODAL & MANAGEMENT HANDLERS
+========================================================== */
+
+function openEditCampModal(camp) {
+    const modal = document.getElementById('universalCampModal');
+    if (!modal) return;
+
+    const idEl = document.getElementById('modal_camp_id');
+    const nameEl = document.getElementById('modal_camp_name');
+    const distEl = document.getElementById('modal_district');
+    const capEl = document.getElementById('modal_capacity');
+    const latEl = document.getElementById('modal_latitude');
+    const lngEl = document.getElementById('modal_longitude');
+    const occEl = document.getElementById('modal_occupants');
+    const offEl = document.getElementById('modal_officer');
+    const titleEl = document.getElementById('universalCampModalTitle');
+
+    if (idEl) idEl.value = camp.id || '';
+    if (nameEl) nameEl.value = camp.camp_name || '';
+    if (distEl) distEl.value = camp.district || '';
+    if (capEl) capEl.value = camp.capacity || '';
+    if (latEl) latEl.value = !isNaN(parseFloat(camp.latitude)) ? parseFloat(camp.latitude).toFixed(6) : (camp.latitude || '');
+    if (lngEl) lngEl.value = !isNaN(parseFloat(camp.longitude)) ? parseFloat(camp.longitude).toFixed(6) : (camp.longitude || '');
+    if (occEl) occEl.innerText = camp.current_population || '0';
+    if (offEl) offEl.innerText = camp.officer_name || 'Camp Officer';
+
+    if (titleEl) {
+        titleEl.innerHTML = '<span>✏️ Modify Camp: ' + escapeHtml(camp.camp_name || 'Location') + '</span>';
+    }
+
+    modal.style.display = 'flex';
+}
+
+function closeUniversalCampModal() {
+    const modal = document.getElementById('universalCampModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function handleCampModalBackdropClick(event) {
+    if (event.target && event.target.id === 'universalCampModal') {
+        closeUniversalCampModal();
+    }
+}
+
+function deleteCampLocation(id, name) {
+    if (!id) return;
+    const campName = name || 'this camp';
+    if (confirm('Are you sure you want to delete camp location "' + campName + '"? This will permanently remove the map marker and all associated records.')) {
+        window.location.href = 'actions.php?action=delete_camp&id=' + encodeURIComponent(id);
+    }
+}
+
+function deleteCampFromModal() {
+    const id = document.getElementById('modal_camp_id').value;
+    const name = document.getElementById('modal_camp_name').value;
+    if (id) {
+        deleteCampLocation(id, name);
+    }
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeUniversalCampModal();
+    }
+});
 
 
 /* ==========================================================
@@ -2228,19 +2648,25 @@ function switchDistrictView(view) {
     currentDistrictView = view;
     const itemsCard = document.getElementById('districtItemsCard');
     const peopleCard = document.getElementById('districtPeopleCard');
+    const campsCard = document.getElementById('districtCampsCard');
     const btnAll = document.getElementById('btnViewAll');
     const btnItems = document.getElementById('btnViewItems');
     const btnPeople = document.getElementById('btnViewPeople');
+    const btnCamps = document.getElementById('btnViewCamps');
 
     if (btnAll) btnAll.classList.toggle('active', view === 'all');
     if (btnItems) btnItems.classList.toggle('active', view === 'items');
     if (btnPeople) btnPeople.classList.toggle('active', view === 'people');
+    if (btnCamps) btnCamps.classList.toggle('active', view === 'camps');
 
     if (itemsCard) {
         itemsCard.style.display = (view === 'all' || view === 'items') ? 'block' : 'none';
     }
     if (peopleCard) {
         peopleCard.style.display = (view === 'all' || view === 'people') ? 'block' : 'none';
+    }
+    if (campsCard) {
+        campsCard.style.display = (view === 'all' || view === 'camps') ? 'block' : 'none';
     }
 }
 
@@ -2249,6 +2675,7 @@ function filterDistrictRecords() {
     const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
     const itemRows = document.querySelectorAll('.district-item-row');
     const peopleRows = document.querySelectorAll('.district-people-row');
+    const campRows = document.querySelectorAll('.district-camp-row');
 
     itemRows.forEach(function(row) {
         const text = (row.getAttribute('data-search') || '').toLowerCase();
@@ -2256,6 +2683,11 @@ function filterDistrictRecords() {
     });
 
     peopleRows.forEach(function(row) {
+        const text = (row.getAttribute('data-search') || '').toLowerCase();
+        row.style.display = (!query || text.indexOf(query) !== -1) ? '' : 'none';
+    });
+
+    campRows.forEach(function(row) {
         const text = (row.getAttribute('data-search') || '').toLowerCase();
         row.style.display = (!query || text.indexOf(query) !== -1) ? '' : 'none';
     });
@@ -2472,20 +2904,24 @@ function switchNationalView(view) {
     currentNatView = view;
     const itemsCard = document.getElementById('nationalItemsCard');
     const peopleCard = document.getElementById('nationalPeopleCard');
+    const campsCard = document.getElementById('nationalCampsCard');
     const mapCard = document.getElementById('nationalMapCard');
 
     const btnAll = document.getElementById('btnNatViewAll');
     const btnItems = document.getElementById('btnNatViewItems');
     const btnPeople = document.getElementById('btnNatViewPeople');
+    const btnCamps = document.getElementById('btnNatViewCamps');
     const btnMap = document.getElementById('btnNatViewMap');
 
     if (btnAll) btnAll.classList.toggle('active', view === 'all');
     if (btnItems) btnItems.classList.toggle('active', view === 'items');
     if (btnPeople) btnPeople.classList.toggle('active', view === 'people');
+    if (btnCamps) btnCamps.classList.toggle('active', view === 'camps');
     if (btnMap) btnMap.classList.toggle('active', view === 'map');
 
     if (itemsCard) itemsCard.style.display = (view === 'all' || view === 'items') ? 'block' : 'none';
     if (peopleCard) peopleCard.style.display = (view === 'all' || view === 'people') ? 'block' : 'none';
+    if (campsCard) campsCard.style.display = (view === 'all' || view === 'camps') ? 'block' : 'none';
     if (mapCard) {
         mapCard.style.display = (view === 'all' || view === 'map') ? 'block' : 'none';
         if ((view === 'all' || view === 'map') && typeof nationalMap !== 'undefined' && nationalMap) {
@@ -2502,6 +2938,7 @@ function filterNationalRecords() {
 
     const itemRows = document.querySelectorAll('.national-item-row');
     const peopleRows = document.querySelectorAll('.national-people-row');
+    const campRows = document.querySelectorAll('.national-camp-row');
 
     itemRows.forEach(function(row) {
         const text = (row.getAttribute('data-search') || '').toLowerCase();
@@ -2512,6 +2949,14 @@ function filterNationalRecords() {
     });
 
     peopleRows.forEach(function(row) {
+        const text = (row.getAttribute('data-search') || '').toLowerCase();
+        const dist = (row.getAttribute('data-district') || '').toLowerCase();
+        const matchQuery = !query || text.indexOf(query) !== -1;
+        const matchDistrict = !selDistrict || dist === selDistrict;
+        row.style.display = (matchQuery && matchDistrict) ? '' : 'none';
+    });
+
+    campRows.forEach(function(row) {
         const text = (row.getAttribute('data-search') || '').toLowerCase();
         const dist = (row.getAttribute('data-district') || '').toLowerCase();
         const matchQuery = !query || text.indexOf(query) !== -1;
@@ -2761,35 +3206,43 @@ if (nationalMapElement) {
                     !isNaN(lng)
                 ) {
 
-                    L.marker([
+                    const marker = L.marker([
                         lat,
                         lng
-                    ])
+                    ]).addTo(nationalMap);
 
-                    .addTo(nationalMap)
+                    const popupDiv = document.createElement("div");
+                    popupDiv.innerHTML = `
+                        <div style="font-family:sans-serif; min-width:200px; padding:2px;">
+                            <strong style="font-size:14px; color:#1e293b; display:block; margin-bottom:4px;">📍 ${escapeHtml(camp.camp_name)}</strong>
+                            <div style="color:#64748b; font-size:12px; line-height:1.5;">
+                                <strong>District:</strong> ${escapeHtml(camp.district)}<br>
+                                <strong>Occupants:</strong> ${camp.current_population} / ${camp.capacity}<br>
+                                <strong>Coordinates:</strong> ${lat.toFixed(5)}, ${lng.toFixed(5)}
+                            </div>
+                            <div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">
+                                <button type="button" class="nat-popup-modify-btn" style="padding:6px 10px; width:100%; background:#0284c7; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600; font-size:12px;">
+                                    ✏️ Modify Camp Details
+                                </button>
+                                <button type="button" class="nat-popup-delete-btn" style="padding:6px 10px; width:100%; background:#ef4444; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600; font-size:12px;">
+                                    🗑️ Delete Location
+                                </button>
+                            </div>
+                        </div>
+                    `;
 
-                    .bindPopup(
+                    popupDiv.querySelector(".nat-popup-modify-btn").addEventListener("click", function(ev) {
+                        ev.stopPropagation();
+                        openEditCampModal(camp);
+                        nationalMap.closePopup();
+                    });
 
-                        "<b>" +
-                        escapeHtml(
-                            camp.camp_name
-                        ) +
-                        "</b><br>" +
+                    popupDiv.querySelector(".nat-popup-delete-btn").addEventListener("click", function(ev) {
+                        ev.stopPropagation();
+                        deleteCampLocation(camp.id, camp.camp_name);
+                    });
 
-                        "District: " +
-                        escapeHtml(
-                            camp.district
-                        ) +
-
-                        "<br>Occupants: " +
-
-                        camp.current_population +
-
-                        "/" +
-
-                        camp.capacity
-
-                    );
+                    marker.bindPopup(popupDiv);
 
                 }
 
