@@ -35,17 +35,11 @@ $role = $_SESSION['role'] ?? '';
 |--------------------------------------------------------------------------
 */
 
-if (
-    $role !== 'Camp Officer' &&
-    $role !== 'National Authority'
-) {
-
+if (!in_array($role, ['Camp Officer', 'District Admin', 'National Authority'])) {
     http_response_code(403);
-
     echo json_encode([
         "error" => "Access Denied"
     ]);
-
     exit;
 }
 

@@ -97,19 +97,19 @@ if ($action === 'save_all') {
     */
 
     $family_head = trim(
-        $_POST['family_head'] ?? ''
+        $_POST['family_head'] ?? $_POST['family_head_name'] ?? ''
     );
 
     $members = (int)(
-        $_POST['members'] ?? 0
+        $_POST['members'] ?? $_POST['members_count'] ?? 0
     );
 
     $infants = (int)(
-        $_POST['infants'] ?? 0
+        $_POST['infants'] ?? $_POST['infants_count'] ?? 0
     );
 
     $special_needs = trim(
-        $_POST['special_needs'] ?? ''
+        $_POST['special_needs'] ?? $_POST['special_needs_details'] ?? ''
     );
 
 
@@ -1470,6 +1470,11 @@ if ($action === 'add_camp') {
     }
 
 
+    $_SESSION['flash_message'] = [
+        'type' => 'success',
+        'message' => 'Camp location saved successfully.'
+    ];
+
     header(
         "Location: index.php"
     );
@@ -1500,19 +1505,19 @@ if ($action === 'add_family') {
     );
 
     $head = trim(
-        $_POST['family_head'] ?? ''
+        $_POST['family_head'] ?? $_POST['family_head_name'] ?? ''
     );
 
     $members = (int)(
-        $_POST['members'] ?? 0
+        $_POST['members'] ?? $_POST['members_count'] ?? 0
     );
 
     $infants = (int)(
-        $_POST['infants'] ?? 0
+        $_POST['infants'] ?? $_POST['infants_count'] ?? 0
     );
 
     $special = trim(
-        $_POST['special_needs'] ?? ''
+        $_POST['special_needs'] ?? $_POST['special_needs_details'] ?? ''
     );
 
 
@@ -1653,6 +1658,11 @@ if ($action === 'add_family') {
 
     $stmt->close();
 
+
+    $_SESSION['flash_message'] = [
+        'type' => 'success',
+        'message' => 'Family intake recorded successfully.'
+    ];
 
     header(
         "Location: index.php"
@@ -1820,6 +1830,11 @@ if ($action === 'request_supplies') {
 
     $stmt->close();
 
+
+    $_SESSION['flash_message'] = [
+        'type' => 'success',
+        'message' => 'Relief supply requests submitted successfully.'
+    ];
 
     header(
         "Location: index.php"

@@ -8,26 +8,38 @@ if (isset($_SESSION['user_id'])) {
     exit;
 }
 
+$reg_error = '';
+
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $username = mysqli_real_escape_string($conn, $_POST['username']);
-    $password = $_POST['password'];
-    $role = mysqli_real_escape_string($conn, $_POST['role']);
-    $district = mysqli_real_escape_string($conn, $_POST['district']);
+    $username = trim($_POST['username'] ?? '');
+    $password = $_POST['password'] ?? '';
+    $role = trim($_POST['role'] ?? '');
+    $district = trim($_POST['district'] ?? '');
 
     if (!empty($username) && !empty($password) && !empty($role) && !empty($district)) {
         // Securely hash the password using bcrypt
         $hashed_password = password_hash($password, PASSWORD_BCRYPT);
         
-        // Insert the new user into the database
-        $sql = "INSERT INTO users (username, password, role, district) VALUES ('$username', '$hashed_password', '$role', '$district')";
-        
-        if ($conn->query($sql) === TRUE) {
-            echo "<script>alert('Registration successful! You can now log in.'); window.location.href='login.php';</script>";
+        $stmt = $conn->prepare("INSERT INTO users (username, password, role, district) VALUES (?, ?, ?, ?)");
+        if ($stmt) {
+            $stmt->bind_param("ssss", $username, $hashed_password, $role, $district);
+            if ($stmt->execute()) {
+                $stmt->close();
+                $_SESSION['flash_message'] = [
+                    'type' => 'success',
+                    'message' => 'Registration successful! You can now log in.'
+                ];
+                header("Location: login.php");
+                exit;
+            } else {
+                $reg_error = "Error: Username might already be taken.";
+            }
+            $stmt->close();
         } else {
-            echo "<script>alert('Error: Username might already be taken.');</script>";
+            $reg_error = "Database error. Please try again.";
         }
     } else {
-        echo "<script>alert('Please fill in all fields correctly.');</script>";
+        $reg_error = "Please fill in all fields correctly.";
     }
 }
 ?>
@@ -50,6 +62,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         <p style="text-align:center; font-size:0.85rem; color:#7f8c8d; margin-bottom:20px;">
             Register new authorized camp or administrative staff.
         </p>
+        
+        <?php if (!empty($reg_error)): ?>
+            <div style="background:#fee2e2; border:1px solid #fca5a5; color:#b91c1c; padding:10px 14px; border-radius:6px; margin-bottom:18px; font-size:13px; font-weight:600; text-align:center;">
+                <?php echo htmlspecialchars($reg_error); ?>
+            </div>
+        <?php endif; ?>
         
         <form action="register.php" method="POST">
             <label>Username:</label>
