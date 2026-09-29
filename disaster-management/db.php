@@ -18,4 +18,8 @@ foreach ($hosts as $h) {
 if (!$conn || $conn->connect_error) {
     die("Database engine communication failure: " . ($conn ? $conn->connect_error : "Unable to establish MySQL connection. Please ensure MySQL is running."));
 }
+
+// Ensure required columns exist
+@$conn->query("ALTER TABLE families ADD COLUMN IF NOT EXISTS recorded_by INT DEFAULT NULL AFTER special_needs_details");
+@$conn->query("ALTER TABLE camps ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at");
 ?>

@@ -1590,10 +1590,11 @@ if ($action === 'add_family') {
             family_head_name,
             members_count,
             infants_count,
-            special_needs_details
+            special_needs_details,
+            recorded_by
         )
         VALUES
-        (?, ?, ?, ?, ?)
+        (?, ?, ?, ?, ?, ?)
     ");
 
 
@@ -1608,12 +1609,13 @@ if ($action === 'add_family') {
 
 
     $stmt->bind_param(
-        "isiis",
+        "isiisi",
         $camp_id,
         $head,
         $members,
         $infants,
-        $special
+        $special,
+        $user_id
     );
 
 
