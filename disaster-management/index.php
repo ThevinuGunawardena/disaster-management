@@ -304,6 +304,7 @@ $national_camps_list = [];
 $national_camp_families_map = [];
 $national_camp_requests_map = [];
 $national_districts = [];
+$national_district_summary = [];
 
 if ($role === 'National Authority') {
 
@@ -362,9 +363,6 @@ if ($role === 'National Authority') {
         while ($row = $res_req->fetch_assoc()) {
             $national_requests[] = $row;
             $total_item_units += (int)$row['quantity'];
-            if (!empty($row['district']) && !in_array($row['district'], $national_districts)) {
-                $national_districts[] = $row['district'];
-            }
             $cid = (int)$row['camp_id'];
             if (!isset($national_camp_requests_map[$cid])) {
                 $national_camp_requests_map[$cid] = [];
@@ -406,9 +404,6 @@ if ($role === 'National Authority') {
             if ($sn !== '' && strtolower($sn) !== 'none') {
                 $total_special_needs_national++;
             }
-            if (!empty($row['district']) && !in_array($row['district'], $national_districts)) {
-                $national_districts[] = $row['district'];
-            }
             $cid = (int)$row['camp_id'];
             if (!isset($national_camp_families_map[$cid])) {
                 $national_camp_families_map[$cid] = [];
@@ -439,13 +434,79 @@ if ($role === 'National Authority') {
     if ($res_camps) {
         while ($row = $res_camps->fetch_assoc()) {
             $national_camps_list[] = $row;
-            if (!empty($row['district']) && !in_array($row['district'], $national_districts)) {
-                $national_districts[] = $row['district'];
+        }
+    }
+
+    // 6. Aggregate Comprehensive District-by-District Intelligence Matrix
+    $init_dist = function($name) use (&$national_district_summary) {
+        $clean = trim($name ?? '');
+        if ($clean === '') return null;
+        $k = strtolower($clean);
+        if (!isset($national_district_summary[$k])) {
+            $national_district_summary[$k] = [
+                'key' => $k,
+                'name' => ucfirst($clean),
+                'camps' => [],
+                'camps_count' => 0,
+                'capacity' => 0,
+                'population' => 0,
+                'families' => [],
+                'families_count' => 0,
+                'infants_count' => 0,
+                'special_needs_count' => 0,
+                'special_needs_list' => [],
+                'requests' => [],
+                'requests_count' => 0,
+                'items_units' => 0,
+                'pending_requests' => 0,
+                'approved_requests' => 0
+            ];
+        }
+        return $k;
+    };
+
+    foreach ($national_camps_list as $c) {
+        $k = $init_dist($c['district'] ?? '');
+        if ($k) {
+            $national_district_summary[$k]['camps'][] = $c;
+            $national_district_summary[$k]['camps_count']++;
+            $national_district_summary[$k]['capacity'] += (int)$c['capacity'];
+            $national_district_summary[$k]['population'] += (int)$c['current_population'];
+        }
+    }
+
+    foreach ($national_families as $f) {
+        $k = $init_dist($f['district'] ?? '');
+        if ($k) {
+            $national_district_summary[$k]['families'][] = $f;
+            $national_district_summary[$k]['families_count']++;
+            $national_district_summary[$k]['infants_count'] += (int)$f['infants_count'];
+            $sn = trim($f['special_needs_details'] ?? '');
+            if ($sn !== '' && strtolower($sn) !== 'none') {
+                $national_district_summary[$k]['special_needs_count']++;
+                $national_district_summary[$k]['special_needs_list'][] = $f['family_head_name'] . ': ' . $sn;
             }
         }
     }
 
-    sort($national_districts);
+    foreach ($national_requests as $r) {
+        $k = $init_dist($r['district'] ?? '');
+        if ($k) {
+            $national_district_summary[$k]['requests'][] = $r;
+            $national_district_summary[$k]['requests_count']++;
+            $national_district_summary[$k]['items_units'] += (int)$r['quantity'];
+            if ($r['status'] === 'Pending') $national_district_summary[$k]['pending_requests']++;
+            if ($r['status'] === 'Approved') $national_district_summary[$k]['approved_requests']++;
+        }
+    }
+
+    uasort($national_district_summary, function($a, $b) {
+        return strcasecmp($a['name'], $b['name']);
+    });
+
+    foreach ($national_district_summary as $k => $info) {
+        $national_districts[] = $info['name'];
+    }
 }
 
 ?>
@@ -2038,6 +2099,151 @@ if ($role === 'National Authority') {
 </div>
 
 <!-- ==========================================================
+     MASTER DISTRICT OPERATIONS & RESOURCE COMMAND MATRIX
+========================================================== -->
+<div class="card" id="nationalDistrictsCard" style="margin-bottom:25px; width:100%;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
+        <div>
+            <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
+                <span>Nationwide District Operations & Resource Command Grid</span>
+            </h2>
+            <p style="margin:4px 0 0 0; color:#64748b; font-size:13px;">
+                Consolidated operational intelligence across all <?php echo count($national_district_summary); ?> districts. View aggregate shelter capacities, population intakes, relief supply pipelines, and critical medical needs.
+            </p>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+            <span style="background:#e0f2fe; color:#0369a1; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:600;">
+                <?php echo count($national_district_summary); ?> Operational Districts
+            </span>
+            <span style="background:#f1f5f9; color:#475569; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:600;">
+                <?php echo $total_camps; ?> Total Camps
+            </span>
+        </div>
+    </div>
+
+    <?php if (count($national_district_summary) > 0): ?>
+        <table class="data-table" id="nationalDistrictsTable">
+            <thead>
+                <tr>
+                    <th style="width:16%;">District</th>
+                    <th style="width:24%;">Active Camps & Capacities</th>
+                    <th style="width:14%;">Displaced People</th>
+                    <th style="width:16%;">Shelter Occupancy</th>
+                    <th style="width:14%;">Relief Supplies</th>
+                    <th style="width:8%; text-align:center;">Special Needs</th>
+                    <th style="width:8%; text-align:center;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($national_district_summary as $k => $d): ?>
+                    <?php 
+                        $cap_val = (int)$d['capacity'];
+                        $pop_val = (int)$d['population'];
+                        $occ_pct = $cap_val > 0 ? round(($pop_val / $cap_val) * 100) : 0;
+                        $occ_color = $occ_pct >= 100 ? '#ef4444' : ($occ_pct >= 80 ? '#d97706' : '#10b981');
+                        $camps_text = '';
+                        foreach ($d['camps'] as $ci) {
+                            $camps_text .= ' ' . $ci['camp_name'] . ' ' . ($ci['officer_name'] ?? '');
+                        }
+                    ?>
+                    <tr class="national-district-row"
+                        data-search="<?php echo htmlspecialchars(strtolower($d['name'] . ' ' . $camps_text . ' ' . implode(' ', $d['special_needs_list']))); ?>"
+                        data-district="<?php echo htmlspecialchars($k); ?>"
+                    >
+                        <td>
+                            <strong style="font-size:15px; color:#0f172a;"><?php echo htmlspecialchars($d['name']); ?></strong>
+                            <div style="font-size:11px; color:#64748b; margin-top:2px;">
+                                <?php echo $d['camps_count']; ?> active <?php echo $d['camps_count'] === 1 ? 'shelter' : 'shelters'; ?>
+                            </div>
+                        </td>
+                        <td>
+                            <?php if (!empty($d['camps'])): ?>
+                                <div style="display:flex; flex-direction:column; gap:4px;">
+                                    <?php foreach ($d['camps'] as $ci): ?>
+                                        <div style="font-size:12px; color:#334155; display:flex; justify-content:space-between; background:#f8fafc; padding:3px 8px; border-radius:4px; border:1px solid #e2e8f0;">
+                                            <span style="font-weight:600;"><?php echo htmlspecialchars($ci['camp_name']); ?></span>
+                                            <span style="color:#64748b; font-size:11px;"><?php echo (int)$ci['current_population']; ?> / <?php echo (int)$ci['capacity']; ?></span>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            <?php else: ?>
+                                <span style="color:#94a3b8; font-style:italic; font-size:12px;">No camps registered</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <strong style="color:#0f172a; font-size:14px;"><?php echo number_format($pop_val); ?></strong>
+                            <span style="font-size:12px; color:#64748b;">people</span>
+                            <div style="font-size:11px; color:#475569; margin-top:2px;">
+                                <?php echo $d['families_count']; ?> families
+                                <?php if ($d['infants_count'] > 0): ?>
+                                    &bull; <span style="color:#0284c7; font-weight:600;">Infants: <?php echo $d['infants_count']; ?></span>
+                                <?php endif; ?>
+                            </div>
+                        </td>
+                        <td>
+                            <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px; display:flex; justify-content:space-between;">
+                                <span><?php echo number_format($pop_val); ?> / <?php echo number_format($cap_val); ?></span>
+                                <span style="color:<?php echo $occ_color; ?>; font-weight:700;"><?php echo $occ_pct; ?>%</span>
+                            </div>
+                            <div style="width:100%; background:#e2e8f0; height:8px; border-radius:4px; overflow:hidden;">
+                                <div style="width:<?php echo min(100, $occ_pct); ?>%; background:<?php echo $occ_color; ?>; height:100%;"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <strong style="color:#0f172a; font-size:14px;"><?php echo number_format($d['items_units']); ?></strong>
+                            <span style="font-size:12px; color:#64748b;">units</span>
+                            <div style="font-size:11px; margin-top:2px; color:#475569;">
+                                <span><?php echo $d['requests_count']; ?> requests</span>
+                                <?php if ($d['pending_requests'] > 0): ?>
+                                    &bull; <span style="color:#d97706; font-weight:600;"><?php echo $d['pending_requests']; ?> pending</span>
+                                <?php endif; ?>
+                            </div>
+                        </td>
+                        <td style="text-align:center;">
+                            <?php if ($d['special_needs_count'] > 0): ?>
+                                <span style="background:#fee2e2; color:#991b1b; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:700; display:inline-block;">
+                                    <?php echo $d['special_needs_count']; ?> Cases
+                                </span>
+                            <?php else: ?>
+                                <span style="color:#94a3b8; font-size:12px;">0</span>
+                            <?php endif; ?>
+                        </td>
+                        <td style="white-space:nowrap; text-align:center;">
+                            <button 
+                                type="button" 
+                                class="btn-action view-btn"
+                                onclick="openDistrictDossierModal('<?php echo $k; ?>')"
+                                title="View comprehensive operational dossier for <?php echo htmlspecialchars($d['name']); ?>"
+                                style="padding:4px 8px; font-size:11px; margin-bottom:2px;"
+                            >
+                                Dossier
+                            </button>
+                            <button 
+                                type="button" 
+                                class="btn-action"
+                                style="background:#0284c7; padding:4px 8px; font-size:11px;"
+                                onclick="selectDistrictFilter('<?php echo $k; ?>')"
+                                title="Filter dashboard view to <?php echo htmlspecialchars($d['name']); ?>"
+                            >
+                                Filter
+                            </button>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                <tr id="nationalDistrictsNoMatch" style="display:none;">
+                    <td colspan="7" style="text-align:center; padding:25px; color:#64748b; background:#f8fafc;">
+                        <div style="font-weight:600; color:#334155; margin-bottom:4px;">No matching districts found</div>
+                        <div style="font-size:13px;">Try clearing search terms or changing your district filter.</div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    <?php else: ?>
+        <p style="padding:15px; color:#64748b;">No district operational data registered.</p>
+    <?php endif; ?>
+</div>
+
+<!-- ==========================================================
      SECTION 1: ALL ITEMS DETAILS & QUANTITIES
 ========================================================== -->
 <div class="card" id="nationalItemsCard" style="margin-bottom:25px; width:100%;">
@@ -2132,6 +2338,12 @@ if ($role === 'National Authority') {
                         </td>
                     </tr>
                 <?php endforeach; ?>
+                <tr id="nationalItemsNoMatch" style="display:none;">
+                    <td colspan="7" style="text-align:center; padding:25px; color:#64748b; background:#f8fafc;">
+                        <div style="font-weight:600; color:#334155; margin-bottom:4px;">No relief supply requests found for the selected filter</div>
+                        <div class="no-match-detail" style="font-size:13px;">This district may not have filed any supply requests yet. Active shelters and displaced persons are listed in other sections.</div>
+                    </td>
+                </tr>
             </tbody>
         </table>
     <?php else: ?>
@@ -2255,6 +2467,12 @@ if ($role === 'National Authority') {
                         </td>
                     </tr>
                 <?php endforeach; ?>
+                <tr id="nationalPeopleNoMatch" style="display:none;">
+                    <td colspan="8" style="text-align:center; padding:25px; color:#64748b; background:#f8fafc;">
+                        <div style="font-weight:600; color:#334155; margin-bottom:4px;">No displaced families found for the selected filter</div>
+                        <div class="no-match-detail" style="font-size:13px;">No family intakes have been recorded under this district yet. Shelter locations and supplies are listed in other sections.</div>
+                    </td>
+                </tr>
             </tbody>
         </table>
     <?php else: ?>
@@ -2370,6 +2588,12 @@ if ($role === 'National Authority') {
                         </td>
                     </tr>
                 <?php endforeach; ?>
+                <tr id="nationalCampsNoMatch" style="display:none;">
+                    <td colspan="7" style="text-align:center; padding:25px; color:#64748b; background:#f8fafc;">
+                        <div style="font-weight:600; color:#334155; margin-bottom:4px;">No camp locations found for the selected filter</div>
+                        <div class="no-match-detail" style="font-size:13px;">No relief shelters match the current filter criteria.</div>
+                    </td>
+                </tr>
             </tbody>
         </table>
     <?php else: ?>
@@ -2398,6 +2622,23 @@ if ($role === 'National Authority') {
     </div>
 </div>
 
+<!-- ==========================================================
+     DISTRICT DOSSIER MODAL
+========================================================== -->
+<div id="districtDossierModal" class="modal-overlay" style="display:none;" onclick="handleDistrictDossierModalBackdropClick(event)">
+    <div class="modal-content modal-animated" style="max-width:800px; width:92%; background:#fff; border-radius:12px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.2), 0 10px 10px -5px rgba(0,0,0,0.1); padding:0; overflow:hidden;">
+        <div id="districtDossierHeader" style="padding:16px 22px; background:#0f172a; color:#fff; display:flex; justify-content:space-between; align-items:center;">
+            <h3 id="districtDossierTitle" style="margin:0; font-size:17px; font-weight:700; color:#fff;">District Operational Dossier</h3>
+            <button type="button" onclick="closeDistrictDossierModal()" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; line-height:1; width:30px; height:30px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">&times;</button>
+        </div>
+        <div id="districtDossierBody" style="padding:22px; max-height:75vh; overflow-y:auto;">
+            <!-- Injected via JavaScript -->
+        </div>
+        <div id="districtDossierFooter" style="padding:14px 22px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
+            <!-- Injected via JavaScript -->
+        </div>
+    </div>
+</div>
 
 <?php else: ?>
 
@@ -3628,10 +3869,14 @@ function clearDistrictSearch() {
 
 <?php elseif ($role === 'National Authority'): ?>
 
+const nationalDistrictData = <?php echo json_encode($national_district_summary, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
 let currentNatView = 'all';
+let nationalMap;
+let allNationalMarkers = [];
 
 function switchNationalView(view) {
     currentNatView = view;
+    const distCard = document.getElementById('nationalDistrictsCard');
     const itemsCard = document.getElementById('nationalItemsCard');
     const peopleCard = document.getElementById('nationalPeopleCard');
     const campsCard = document.getElementById('nationalCampsCard');
@@ -3649,13 +3894,16 @@ function switchNationalView(view) {
     if (btnCamps) btnCamps.classList.toggle('active', view === 'camps');
     if (btnMap) btnMap.classList.toggle('active', view === 'map');
 
+    if (distCard) distCard.style.display = (view === 'all') ? 'block' : 'none';
     if (itemsCard) itemsCard.style.display = (view === 'all' || view === 'items') ? 'block' : 'none';
     if (peopleCard) peopleCard.style.display = (view === 'all' || view === 'people') ? 'block' : 'none';
     if (campsCard) campsCard.style.display = (view === 'all' || view === 'camps') ? 'block' : 'none';
     if (mapCard) {
         mapCard.style.display = (view === 'all' || view === 'map') ? 'block' : 'none';
         if ((view === 'all' || view === 'map') && typeof nationalMap !== 'undefined' && nationalMap) {
-            setTimeout(function() { nationalMap.invalidateSize(); }, 200);
+            setTimeout(function() { 
+                nationalMap.invalidateSize(); 
+            }, 200);
         }
     }
 }
@@ -3666,33 +3914,113 @@ function filterNationalRecords() {
     const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
     const selDistrict = (districtFilter ? districtFilter.value : '').toLowerCase().trim();
 
-    const itemRows = document.querySelectorAll('.national-item-row');
-    const peopleRows = document.querySelectorAll('.national-people-row');
-    const campRows = document.querySelectorAll('.national-camp-row');
+    // 1. Filter District Summary Table
+    const distRows = document.querySelectorAll('.national-district-row');
+    let visibleDistCount = 0;
+    distRows.forEach(function(row) {
+        const text = (row.getAttribute('data-search') || '').toLowerCase();
+        const dist = (row.getAttribute('data-district') || '').toLowerCase();
+        const matchQuery = !query || text.indexOf(query) !== -1;
+        const matchDistrict = !selDistrict || dist === selDistrict;
+        const show = matchQuery && matchDistrict;
+        row.style.display = show ? '' : 'none';
+        if (show) visibleDistCount++;
+    });
+    const distNoMatch = document.getElementById('nationalDistrictsNoMatch');
+    if (distNoMatch) distNoMatch.style.display = (visibleDistCount === 0 && distRows.length > 0) ? '' : 'none';
 
+    // 2. Filter Items Table
+    const itemRows = document.querySelectorAll('.national-item-row');
+    let visibleItemCount = 0;
     itemRows.forEach(function(row) {
         const text = (row.getAttribute('data-search') || '').toLowerCase();
         const dist = (row.getAttribute('data-district') || '').toLowerCase();
         const matchQuery = !query || text.indexOf(query) !== -1;
         const matchDistrict = !selDistrict || dist === selDistrict;
-        row.style.display = (matchQuery && matchDistrict) ? '' : 'none';
+        const show = matchQuery && matchDistrict;
+        row.style.display = show ? '' : 'none';
+        if (show) visibleItemCount++;
     });
+    const itemNoMatch = document.getElementById('nationalItemsNoMatch');
+    if (itemNoMatch) {
+        itemNoMatch.style.display = (visibleItemCount === 0 && itemRows.length > 0) ? '' : 'none';
+        const detailEl = itemNoMatch.querySelector('.no-match-detail');
+        if (detailEl) {
+            if (selDistrict) {
+                const label = (districtFilter && districtFilter.selectedIndex > 0) ? districtFilter.options[districtFilter.selectedIndex].text : selDistrict;
+                detailEl.textContent = 'No relief supply requests have been filed for ' + label + '. Active shelters and displaced persons are listed in other sections.';
+            } else {
+                detailEl.textContent = 'No relief supply requests match the search query. Try broadening your search criteria.';
+            }
+        }
+    }
 
+    // 3. Filter People Table
+    const peopleRows = document.querySelectorAll('.national-people-row');
+    let visiblePeopleCount = 0;
     peopleRows.forEach(function(row) {
         const text = (row.getAttribute('data-search') || '').toLowerCase();
         const dist = (row.getAttribute('data-district') || '').toLowerCase();
         const matchQuery = !query || text.indexOf(query) !== -1;
         const matchDistrict = !selDistrict || dist === selDistrict;
-        row.style.display = (matchQuery && matchDistrict) ? '' : 'none';
+        const show = matchQuery && matchDistrict;
+        row.style.display = show ? '' : 'none';
+        if (show) visiblePeopleCount++;
     });
+    const peopleNoMatch = document.getElementById('nationalPeopleNoMatch');
+    if (peopleNoMatch) {
+        peopleNoMatch.style.display = (visiblePeopleCount === 0 && peopleRows.length > 0) ? '' : 'none';
+        const detailEl = peopleNoMatch.querySelector('.no-match-detail');
+        if (detailEl) {
+            if (selDistrict) {
+                const label = (districtFilter && districtFilter.selectedIndex > 0) ? districtFilter.options[districtFilter.selectedIndex].text : selDistrict;
+                detailEl.textContent = 'No displaced families registered under ' + label + ' yet. Shelter locations and supplies are listed in other sections.';
+            } else {
+                detailEl.textContent = 'No displaced families match the search query. Try broadening your search criteria.';
+            }
+        }
+    }
 
+    // 4. Filter Camps Table
+    const campRows = document.querySelectorAll('.national-camp-row');
+    let visibleCampCount = 0;
     campRows.forEach(function(row) {
         const text = (row.getAttribute('data-search') || '').toLowerCase();
         const dist = (row.getAttribute('data-district') || '').toLowerCase();
         const matchQuery = !query || text.indexOf(query) !== -1;
         const matchDistrict = !selDistrict || dist === selDistrict;
-        row.style.display = (matchQuery && matchDistrict) ? '' : 'none';
+        const show = matchQuery && matchDistrict;
+        row.style.display = show ? '' : 'none';
+        if (show) visibleCampCount++;
     });
+    const campNoMatch = document.getElementById('nationalCampsNoMatch');
+    if (campNoMatch) campNoMatch.style.display = (visibleCampCount === 0 && campRows.length > 0) ? '' : 'none';
+
+    // 5. Leaflet Map Markers & Dynamic Bounds
+    if (typeof nationalMap !== 'undefined' && nationalMap && allNationalMarkers.length > 0) {
+        const visibleMarkers = [];
+        allNationalMarkers.forEach(function(item) {
+            const matchDist = !selDistrict || item.district === selDistrict;
+            const matchQ = !query || item.name.indexOf(query) !== -1 || item.district.indexOf(query) !== -1;
+            if (matchDist && matchQ) {
+                if (!nationalMap.hasLayer(item.marker)) {
+                    nationalMap.addLayer(item.marker);
+                }
+                visibleMarkers.push(item);
+            } else {
+                if (nationalMap.hasLayer(item.marker)) {
+                    nationalMap.removeLayer(item.marker);
+                }
+            }
+        });
+
+        if (selDistrict && visibleMarkers.length > 0) {
+            const bounds = L.latLngBounds(visibleMarkers.map(m => [m.lat, m.lng]));
+            nationalMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 13 });
+        } else if (!selDistrict && !query) {
+            nationalMap.setView([7.8731, 80.7718], 7);
+        }
+    }
 }
 
 function clearNationalSearch() {
@@ -3702,6 +4030,113 @@ function clearNationalSearch() {
     if (districtFilter) districtFilter.value = '';
     filterNationalRecords();
     if (searchInput) searchInput.focus();
+}
+
+function selectDistrictFilter(districtKey) {
+    const select = document.getElementById('nationalDistrictFilter');
+    if (select) {
+        select.value = (districtKey || '').toLowerCase();
+        filterNationalRecords();
+        const target = document.getElementById('nationalDistrictsCard') || select;
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+function openDistrictDossierModal(districtKey) {
+    const d = nationalDistrictData[districtKey];
+    const modal = document.getElementById('districtDossierModal');
+    const title = document.getElementById('districtDossierTitle');
+    const body = document.getElementById('districtDossierBody');
+    const footer = document.getElementById('districtDossierFooter');
+    if (!modal || !title || !body || !d) return;
+
+    title.innerHTML = 'Strategic Intelligence Dossier: ' + escapeHtml(d.name) + ' District';
+
+    const cap = parseInt(d.capacity) || 0;
+    const pop = parseInt(d.population) || 0;
+    const occPct = cap > 0 ? Math.round((pop / cap) * 100) : 0;
+    const occColor = occPct >= 100 ? '#ef4444' : (occPct >= 80 ? '#d97706' : '#10b981');
+
+    let campsListHtml = '';
+    if (d.camps && d.camps.length > 0) {
+        campsListHtml = '<div style="margin-top:16px;">' +
+            '<h4 style="margin:0 0 8px 0; color:#1e293b; font-size:14px;">Active Relief Camps (' + d.camps.length + ' Locations):</h4>' +
+            '<div style="overflow-x:auto;">' +
+                '<table style="width:100%; border-collapse:collapse; font-size:13px; background:#fff; border:1px solid #e2e8f0; border-radius:6px;">' +
+                    '<thead><tr style="background:#f8fafc; border-bottom:1px solid #e2e8f0; text-align:left;">' +
+                        '<th style="padding:8px 12px;">Camp Name</th>' +
+                        '<th style="padding:8px 12px;">Occupants / Capacity</th>' +
+                        '<th style="padding:8px 12px;">Coordinates</th>' +
+                        '<th style="padding:8px 12px;">Officer</th>' +
+                    '</tr></thead>' +
+                    '<tbody>' +
+                    d.camps.map(function(c) {
+                        return '<tr style="border-bottom:1px solid #f1f5f9;">' +
+                            '<td style="padding:8px 12px; font-weight:600; color:#0f172a;">' + escapeHtml(c.camp_name) + '</td>' +
+                            '<td style="padding:8px 12px;">' + parseInt(c.current_population) + ' / ' + parseInt(c.capacity) + '</td>' +
+                            '<td style="padding:8px 12px; font-family:monospace; font-size:12px; color:#64748b;">' + escapeHtml(c.latitude) + ', ' + escapeHtml(c.longitude) + '</td>' +
+                            '<td style="padding:8px 12px; color:#475569;">' + escapeHtml(c.officer_name || 'Camp Officer') + '</td>' +
+                        '</tr>';
+                    }).join('') +
+                    '</tbody>' +
+                '</table>' +
+            '</div>' +
+        '</div>';
+    } else {
+        campsListHtml = '<p style="color:#64748b; font-size:13px; margin-top:12px;">No active camps registered in this district.</p>';
+    }
+
+    let specialNeedsHtml = '';
+    if (d.special_needs_list && d.special_needs_list.length > 0) {
+        specialNeedsHtml = '<div style="margin-top:16px; background:#fff1f2; border:1px solid #fecaca; border-radius:8px; padding:12px 14px;">' +
+            '<div style="font-weight:700; color:#991b1b; font-size:13px; margin-bottom:8px;">Reported Special Requirements (' + d.special_needs_list.length + ' Cases):</div>' +
+            '<ul style="margin:0; padding-left:18px; color:#881337; font-size:13px; line-height:1.6;">' +
+                d.special_needs_list.map(function(sn) { return '<li>' + escapeHtml(sn) + '</li>'; }).join('') +
+            '</ul>' +
+        '</div>';
+    }
+
+    body.innerHTML = 
+        '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px; margin-bottom:16px;">' +
+            '<div style="background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #3b82f6; padding:10px 14px; border-radius:6px;">' +
+                '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Active Camps</div>' +
+                '<div style="font-size:20px; font-weight:700; color:#1e293b; margin-top:2px;">' + (d.camps_count || 0) + '</div>' +
+            '</div>' +
+            '<div style="background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #10b981; padding:10px 14px; border-radius:6px;">' +
+                '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Displaced People</div>' +
+                '<div style="font-size:20px; font-weight:700; color:#1e293b; margin-top:2px;">' + pop + '</div>' +
+                '<div style="font-size:11px; color:#64748b;">' + (d.families_count || 0) + ' families &bull; Infants: ' + (d.infants_count || 0) + '</div>' +
+            '</div>' +
+            '<div style="background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid ' + occColor + '; padding:10px 14px; border-radius:6px;">' +
+                '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Occupancy Rate</div>' +
+                '<div style="font-size:20px; font-weight:700; color:' + occColor + '; margin-top:2px;">' + occPct + '%</div>' +
+                '<div style="font-size:11px; color:#64748b;">' + pop + ' / ' + cap + ' capacity</div>' +
+            '</div>' +
+            '<div style="background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #f59e0b; padding:10px 14px; border-radius:6px;">' +
+                '<div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Supply Pipeline</div>' +
+                '<div style="font-size:20px; font-weight:700; color:#1e293b; margin-top:2px;">' + (d.items_units || 0) + ' <span style="font-size:12px; font-weight:500;">units</span></div>' +
+                '<div style="font-size:11px; color:#64748b;">' + (d.requests_count || 0) + ' requests (' + (d.pending_requests || 0) + ' pending)</div>' +
+            '</div>' +
+        '</div>' +
+        campsListHtml +
+        specialNeedsHtml;
+
+    footer.innerHTML = 
+        '<button type="button" class="btn-action" style="background:#0284c7; padding:8px 16px; font-size:13px;" onclick="closeDistrictDossierModal(); selectDistrictFilter(\'' + escapeHtml(districtKey) + '\');">Filter Dashboard to ' + escapeHtml(d.name) + '</button>' +
+        '<button type="button" onclick="closeDistrictDossierModal()" style="padding:8px 16px; background:#64748b; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Close</button>';
+
+    modal.style.display = 'flex';
+}
+
+function closeDistrictDossierModal() {
+    const modal = document.getElementById('districtDossierModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function handleDistrictDossierModalBackdropClick(event) {
+    if (event.target && event.target.id === 'districtDossierModal') {
+        closeDistrictDossierModal();
+    }
 }
 
 function openNationalItemModal(req, families) {
@@ -3881,70 +4316,37 @@ function handleNationalModalBackdropClick(event) {
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         closeNationalModal();
+        closeDistrictDossierModal();
         if (typeof closeEditFamilyModal === 'function') closeEditFamilyModal();
         if (typeof closeCampDetailsModal === 'function') closeCampDetailsModal();
     }
 });
 
-let nationalMap;
 const nationalMapElement = document.getElementById("nationalMap");
 
-
 if (nationalMapElement) {
-
-    const nationalMap =
-        L.map("nationalMap").setView(
-            [7.8731, 80.7718],
-            7
-        );
-
+    nationalMap = L.map("nationalMap").setView([7.8731, 80.7718], 7);
 
     L.tileLayer(
         "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
         {
-            attribution:
-                "&copy; OpenStreetMap contributors"
+            attribution: "&copy; OpenStreetMap contributors"
         }
     ).addTo(nationalMap);
 
-
     fetch("get_camps.php")
-
         .then(response => {
-
-            if (!response.ok) {
-
-                throw new Error(
-                    "Failed to load camps"
-                );
-
-            }
-
+            if (!response.ok) throw new Error("Failed to load camps");
             return response.json();
-
         })
-
-
         .then(data => {
-
+            allNationalMarkers = [];
             data.forEach(camp => {
+                const lat = parseFloat(camp.latitude);
+                const lng = parseFloat(camp.longitude);
 
-                const lat =
-                    parseFloat(camp.latitude);
-
-                const lng =
-                    parseFloat(camp.longitude);
-
-
-                if (
-                    !isNaN(lat) &&
-                    !isNaN(lng)
-                ) {
-
-                    const marker = L.marker([
-                        lat,
-                        lng
-                    ]).addTo(nationalMap);
+                if (!isNaN(lat) && !isNaN(lng)) {
+                    const marker = L.marker([lat, lng]).addTo(nationalMap);
 
                     const popupDiv = document.createElement("div");
                     popupDiv.innerHTML = `
@@ -3979,24 +4381,23 @@ if (nationalMapElement) {
 
                     marker.bindPopup(popupDiv);
 
+                    allNationalMarkers.push({
+                        marker: marker,
+                        district: (camp.district || '').toLowerCase().trim(),
+                        name: (camp.camp_name || '').toLowerCase().trim(),
+                        lat: lat,
+                        lng: lng
+                    });
                 }
-
             });
 
+            // Initial filtering sync
+            filterNationalRecords();
         })
-
-
         .catch(error => {
-
-            console.error(
-                "National map error:",
-                error
-            );
-
+            console.error("National map error:", error);
         });
-
 }
-
 
 <?php endif; ?>
 
